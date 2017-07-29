@@ -9,11 +9,11 @@ import random
 T_STRING = 0
 T_COMMA = 1
 T_NUMBER = 2
-T_ASSIGN = 3
-T_ADD = 4
-T_MUL = 5
-T_CMP = 6
-T_NOT = 7
+T_ADD = 3
+T_MUL = 4
+T_CMP = 5
+T_NOT = 6
+T_ASSIGN = 7
 T_IF = 8
 T_ELSE = 9
 T_FOR = 10
@@ -43,10 +43,10 @@ class Tokenizer:
 
   TMPL_EXPR = '("[^"]+")|(,)|' + \
               '([0-9]+(?:\.[0-9]+)?)|' + \
-              '(=)|' + \
               '([+\-])|([*/%])|' + \
               '(<=|>=|<|>|==|!=)|' + \
               '(not)|' + \
+              '(=)|' + \
               '(if)|(else)|(for)|' + \
               '(func)|(return)|(end)|' + \
               '(emit)|(as)|' + \
@@ -124,7 +124,9 @@ class InvalidToken(Exception):
       
 class ASTNode:
   """ Basic AST node """
-  pass
+  
+  def accept(self, visitor):
+    visitor.visit(self)
   
 class NumberNode(ASTNode):
   """ Number literal """
@@ -256,6 +258,134 @@ class ArrayIndexNode(ASTNode):
   def __init__(self, id, expr):
     self.name = id
     self.index_expr = expr
+
+class CodeGen:
+  """ Code generator """
+
+  def __init__(self, root_node):
+    self.ast = root_node
+    
+  def generate(self):
+    """ Start code generation """
+    
+    if self.ast is None:
+      raise Exception('No AST specified!')
+    self.ast.accept(self)
+    
+
+  def random_id(self):
+    return random.randint(0, 10000)
+
+  def emit(self, op, args_str = None):
+    """ Emit opcode """
+    
+    output = op
+    if args_str != None:
+      output += args_str
+    
+    print(output)
+
+  def visit(self, node):
+    """ Visit AST node and dump info """
+  
+    if isinstance(node, MathNode) or \
+       isinstance(node, CMPNode) or \
+       isinstance(node, LogicNode):
+      node.l.accept(self)
+      node.r.accept(self)
+      # Binary expression
+      self.emit(node.op)
+    elif isinstance(node, NumberNode):
+      # Integer/float number
+      self.emit(node.value)
+    elif isinstance(node, StringNode):
+      # Character string
+      self.emit(node.value)
+    elif isinstance(node, VariableNode):
+      # Variable identifier
+      self.emit('ID:', node.name)
+    elif isinstance(node, CallNode):
+      # Function call
+      for arg_expr in node.call_args:
+        arg_expr.accept(self)
+        self.emit('CALL:', node.name)
+    elif isinstance(node, MinusNode):
+      # Math inversion
+      node.expr.accept(self)
+      self.emit('MINUS')
+    elif isinstance(node, NegateNode):
+      # NOT expression
+      node.expr.accept(self)
+      self.emit('NOT')
+    elif isinstance(node, BlockNode):
+      # Sequence of statements
+      for stmt in node.statements:
+        stmt.accept(self)
+    elif isinstance(node, AssignNode):
+      # Assignment to variable
+      node.expr.accept(self)
+      self.emit('STORE ID:', node.name)
+    elif isinstance(node, CondNode):
+      # If expression
+      node.cond_expr.accept(self)
+      id = self.random_id()
+      self.emit('IF FALSE', '-> IFE_FB_%d' % id)
+      node.true_expr.accept(self)
+      self.emit('->', 'IF_TR_%d' % id)
+      self.emit('IFE_FB_%d:' % id)
+      node.false_expr.accept(self)
+      self.emit('IF_TR:')
+    elif isinstance(node, IfNode):
+      # If statement
+      node.cond_expr.accept(self)
+      id = self.random_id()
+      self.emit('IF FALSE -> IF_FB_%d' % id)
+      node.true_branch.accept(self)
+      if node.false_branch is not None:
+        self.emit('->', 'IF_TR_%d' % id)
+        self.emit('IF_FB_%d:' % id)
+        node.false_branch.accept(self)
+        self.emit('IF_TR_%d:' % id)
+      else:
+        self.emit('IF_FB_%d:' % id)
+    elif isinstance(node, ForWhileNode):
+      # While loop statement
+      id = self.random_id()
+      self.emit('FOR_W_COND_%d:' % id)
+      node.cond_expr.accept(self)
+      self.emit('IF FALSE', '-> FOR_W_END_%d' % id)
+      node.loop_block.accept(self)
+      self.emit('->', 'FOR_W_COND_%d' % id)
+      self.emit('FOR_W_END_%d:' % id)
+    elif isinstance(node, FuncNode):
+      num_params = len(node.param_list)
+      self.emit('FUNC:', '%s.%d' % (node.name, num_params))
+      node.func_block.accept(self)
+      self.emit('RET')
+    elif isinstance(node, ReturnNode):
+      # Return statement
+      if node.result is not None:
+        node.result.accept(self)
+      self.emit('RET')
+    elif isinstance(node, EmitNode):
+      # Emit result statement
+      node.value.accept(self)
+      if node.name is not None:
+        self.emit('EMIT', '"%s"' % node.name)
+      else:
+        self.emit('EMIT')
+    elif isinstance(node, ArrayNode):
+      # Array literal
+      for elem in node.elements:
+        elem.accept(self)
+        self.emit('ARRAY:', '%d' % len(node.elements))
+    elif isinstance(node, ArrayIndexNode):
+      # Array indexing
+      node.index_expr.accept(self)
+      self.emit('INDEX:', '%s' % node.name)
+    else:
+      raise Exception('Unknown node type (%s)!' % type(node))
+
   
 stack = []
     
@@ -637,110 +767,6 @@ def parse_block(src, type = B_OUTER):
     require_cr(src)
   
   return ast
-  
-def random_id():
-  return random.randint(0, 10000)
-
-def traverse_ast(node):
-  """ Traverse and dump AST node info """
-  
-  if isinstance(node, MathNode) or \
-     isinstance(node, CMPNode) or \
-     isinstance(node, LogicNode):
-    traverse_ast(node.l)
-    traverse_ast(node.r)
-    # Binary expression
-    print(node.op)
-  elif isinstance(node, NumberNode):
-    # Integer/float number
-    print(node.value)
-  elif isinstance(node, StringNode):
-    # Character string
-    print(node.value)
-  elif isinstance(node, VariableNode):
-    # Variable identifier
-    print('ID: %s' % node.name)
-  elif isinstance(node, CallNode):
-    # Function call
-    for arg_expr in node.call_args:
-      traverse_ast(arg_expr)
-    print('CALL: %s' % node.name)
-  elif isinstance(node, MinusNode):
-    # Math inversion
-    traverse_ast(node.expr)
-    print('MINUS')
-  elif isinstance(node, NegateNode):
-    # NOT expression
-    traverse_ast(node.expr)
-    print('NOT')
-  elif isinstance(node, BlockNode):
-    # Sequence of statements
-    for stmt in node.statements:
-      traverse_ast(stmt)
-  elif isinstance(node, AssignNode):
-    # Assignment to variable
-    traverse_ast(node.expr)
-    print('STORE ID: %s' % node.name)
-  elif isinstance(node, CondNode):
-    # If expression
-    traverse_ast(node.cond_expr)
-    id = random_id()
-    print('IF FALSE -> IFE_FB_%d' % id)
-    traverse_ast(node.true_expr)
-    print('-> IF_TR_%d' % id)
-    print('IFE_FB_%d:' % id)
-    traverse_ast(node.false_expr)
-    print('IF_TR:')
-  elif isinstance(node, IfNode):
-    # If statement
-    traverse_ast(node.cond_expr)
-    id = random_id()
-    print('IF FALSE -> IF_FB_%d' % id)
-    traverse_ast(node.true_branch)
-    if node.false_branch is not None:
-      print('-> IF_TR_%d' % id)
-      print('IF_FB_%d:' % id)
-      traverse_ast(node.false_branch)
-      print('IF_TR_%d:' % id)
-    else:
-      print('IF_FB_%d:' % id)
-  elif isinstance(node, ForWhileNode):
-    # While loop statement
-    id = random_id()
-    print('FOR_W_COND_%d:' % id)
-    traverse_ast(node.cond_expr)
-    print('IF FALSE -> FOR_W_END_%d' % id)
-    traverse_ast(node.loop_block)
-    print('-> FOR_W_COND_%d' % id)
-    print('FOR_W_END_%d:' % id)
-  elif isinstance(node, FuncNode):
-    num_params = len(node.param_list)
-    print('FUNC: %s.%d' % (node.name, num_params))
-    traverse_ast(node.func_block)
-    print('RET')
-  elif isinstance(node, ReturnNode):
-    # Return statement
-    if node.result is not None:
-      traverse_ast(node.result)
-    print('RET')
-  elif isinstance(node, EmitNode):
-    # Emit result statement
-    traverse_ast(node.value)
-    if node.name is not None:
-      print('EMIT "%s"' % node.name)
-    else:
-      print('EMIT')
-  elif isinstance(node, ArrayNode):
-    # Array literal
-    for elem in node.elements:
-      traverse_ast(elem)
-    print('ARRAY: %d' % len(node.elements))
-  elif isinstance(node, ArrayIndexNode):
-    # Array indexing
-    traverse_ast(node.index_expr)
-    print('INDEX: %s' % node.name)
-  else:
-    raise Exception('Unknown node type (%s)!' % type(node))
 
 def test_parse():
   print('Source lines: ')
@@ -757,7 +783,8 @@ def test_parse():
   ast = parse_block(tok, B_OUTER)
   # Results
   print('')
-  traverse_ast(ast)
+  generator = CodeGen(ast)
+  generator.generate()
 
 if __name__ == '__main__':
   # Parse standard input

@@ -44,7 +44,6 @@ class InvalidSequence(Exception):
 		args = (seq, line_num, line)
 		msg = "Invalid sequence on input: %s\nLine: %d, %s" % args
 		Exception.__init__(self, msg)
-<<<<<<< HEAD
 
 class InvalidToken(Exception):
 	""" Invalid token occured """
@@ -57,20 +56,6 @@ class InvalidToken(Exception):
 class Tokenizer:
 	""" Performs string tokenization """
 
-=======
-
-class InvalidToken(Exception):
-	""" Invalid token occured """
-	
-	def __init__(self, src):
-		args = (src.t_type, src.t_val, src.line_number, src.line)
-		msg = 'Invalid token: %s, %s\nLine: %d, %s' % args
-		Exception.__init__(self, msg)
-
-class Tokenizer:
-	""" Performs string tokenization """
-
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 	# Complex templates
 	TMPL_MAIN = '("[^"]+")|(,)|' + \
 				'([0-9a-z_]+:)|' + \
@@ -314,12 +299,7 @@ class ArrayIndexNode(ASTNode):
 	"""Array indexing node """
 	
 	def __init__(self, id, expr):
-<<<<<<< HEAD
 		self.array_expr = id
-=======
-		# TODO: name (string) -> array_expr (ASTNode)
-		self.name = id
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 		self.index_expr = expr
 		
 class UseVariableNode(ASTNode):
@@ -374,12 +354,8 @@ class Parser:
 				self.parse_expr(src)
 				if src.t_type != T_RSBR:
 					raise InvalidToken(src)
-<<<<<<< HEAD
 				array_var = VariableNode(ident)
 				result = ArrayIndexNode(array_var, self.stack.pop())
-=======
-				result = ArrayIndexNode(ident, self.stack.pop())
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 			else:
 				src.hold()
 				result = VariableNode(ident)
@@ -802,7 +778,6 @@ class Parser:
 		
 		return ast
 		
-<<<<<<< HEAD
 class Scope:
 	""" Global or function scope """
 	
@@ -820,10 +795,6 @@ class CodeGen:
 	# External definitions type
 	EXT_CONST = 'const'
 	EXT_FUNC = 'func'
-=======
-class CodeGen:
-	""" Code generator """
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 	
 	# Section identifiers
 	SECTION_DATA = '.data'
@@ -838,17 +809,12 @@ class CodeGen:
 		'&': 'concat'
 	}
 	
-<<<<<<< HEAD
 	JMP_OPCODES = {
-=======
-	JMP_TYPES = {
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 		'<': 'jmplt', '<=': 'jmple',
 		'>': 'jmpgt', '>=': 'jmpge',
 		'==': 'jmpeq', '!=': 'jmpne'
 	}
 	
-<<<<<<< HEAD
 	CMP_INVERSE = {
 		'<': '>=', '>': '<=',
 		'<=': '>', '>=': '<',
@@ -867,16 +833,10 @@ class CodeGen:
 		self.global_var_gen_idxs = []
 		self.generated = []
 		self.const_data = []
-=======
-	def __init__(self, root_node):
-		self.ast = root_node
-		self.scopes = []
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 		self.entry_node = None
 		self.last_op = None
 		self.last_jmp_id = 0
 		
-<<<<<<< HEAD
 	def load_module_defs(self, mod_name):
 		""" Load module function definitions """
 		
@@ -957,39 +917,6 @@ class CodeGen:
 			var_idx = global_scope.variables[var_name]
 			resolved_opcode = '%s %d' % (op[1:], var_idx)
 			self.generated[gen_idx] = resolved_opcode
-=======
-	def get_scope():
-		""" Get current scope name """
-		
-		return self.scopes[len(self.scopes) - 1]
-
-	def new_jmp_id(self):
-		self.last_jmp_id += 1
-		return self.last_jmp_id
-
-	def emit(self, op, args_str = None):
-		""" Emit opcode """
-		
-		self.last_op = op
-		output = op
-		if args_str != None:
-			output += ' ' + args_str
-		
-		print(output)
-		
-	def emit_if_cond(self, node, true_branch_label):
-		""" Emit condition expression """
-		
-		if isinstance(node.cond_expr, CMPNode):
-			node.cond_expr.l.accept(self)
-			node.cond_expr.r.accept(self)
-			jmp_op = CodeGen.JMP_TYPES[node.cond_expr.op]
-			self.emit(jmp_op, true_branch_label)
-		else:
-			node.cond_expr.accept(self)
-			self.emit('cmp 1')
-			self.emit('jmpeq', true_branch_label)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 		
 	def generate(self):
 		""" Start code generation """
@@ -1008,7 +935,6 @@ class CodeGen:
 				self.entry_node = stmt
 				break
 		
-<<<<<<< HEAD
 		# Traverse AST
 		self.scopes.append(Scope('global'))
 		self.ast.accept(self)
@@ -1050,11 +976,6 @@ class CodeGen:
 			self.emit('load.const', cmp_arg)
 			self.emit('jmpeq', branch_label)
 		
-=======
-		self.scopes.append('global')
-		self.ast.accept(self)
-
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 	def visit(self, node):
 		""" Visit AST node and generate code """
 		
@@ -1081,7 +1002,6 @@ class CodeGen:
 			self.emit('load', node.value)
 		elif isinstance(node, VariableNode):
 			# Variable identifier
-<<<<<<< HEAD
 			if self.ext_defines.has_key(node.name):
 				self.emit('load.const', node.name)
 			else:
@@ -1090,23 +1010,16 @@ class CodeGen:
 					self.emit('load', '#' + str(var_idx))
 				else:
 					self.add_global_var_ref('load', node.name)
-=======
-			self.emit('load', node.name)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 		elif isinstance(node, CallNode):
 			# Function call
 			for arg_expr in node.call_args:
 				arg_expr.accept(self)
-<<<<<<< HEAD
 			if self.ext_defines.has_key(node.name):
 				# External function
 				self.emit('call', node.name)
 			else:
 				# Defined function
 				self.emit('invoke', node.name)
-=======
-				self.emit('call', node.name)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 		elif isinstance(node, MinusNode):
 			# Math inversion
 			node.expr.accept(self)
@@ -1123,24 +1036,16 @@ class CodeGen:
 		elif isinstance(node, AssignNode):
 			# Assignment to variable
 			node.expr.accept(self)
-<<<<<<< HEAD
 			var_idx = self.put_scope_var(node.name)
 			if var_idx is not None:
 				self.emit('store', str(var_idx))
 			else:
 				self.add_global_var_ref('store', node.name)
-=======
-			self.emit('store', node.name)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 		elif isinstance(node, CondNode):
 			# If expression
 			id = self.new_jmp_id()
 			true_label = 'IFE_TB_%d' % id
-<<<<<<< HEAD
 			self.emit_if_common(node, True, true_label)
-=======
-			self.emit_if_cond(node, true_label)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 			node.false_expr.accept(self)
 			self.emit('jmp', 'IFE_%d' % id)
 			self.emit(true_label + ':')
@@ -1149,7 +1054,6 @@ class CodeGen:
 		elif isinstance(node, IfNode):
 			# If statement
 			id = self.new_jmp_id()
-<<<<<<< HEAD
 			end_label = 'IF_%d' % id
 			if node.false_branch is not None:
 				true_label = 'IF_TB_%d' % id
@@ -1161,26 +1065,12 @@ class CodeGen:
 				self.emit_if_common(node, False, end_label)
 			node.true_branch.accept(self)
 			self.emit(end_label + ':')
-=======
-			true_label = 'IF_TB_%d' % id
-			self.emit_if_cond(node, true_label)
-			if node.false_branch is not None:
-				node.false_branch.accept(self)
-				self.emit('jmp', 'IF_%d' % id)
-			self.emit(true_label + ':')
-			node.true_branch.accept(self)
-			self.emit('IF_%d:' % id)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 		elif isinstance(node, ForWhileNode):
 			# While loop statement
 			id = self.new_jmp_id()
 			true_label = 'FOR_LOOP_%d' % id
 			self.emit('FOR_COND_%d:' % id)
-<<<<<<< HEAD
 			self.emit_if_common(node, True, true_label)
-=======
-			self.emit_if_cond(node, true_label)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 			self.emit('jmp', 'FOR_END_%d' % id)
 			self.emit(true_label + ':')
 			node.loop_block.accept(self)
@@ -1188,13 +1078,9 @@ class CodeGen:
 			self.emit('FOR_END_%d:' % id)
 		elif isinstance(node, FuncNode):
 			# Function definition
-<<<<<<< HEAD
 			self.scopes.append(Scope(node.name))
 			for param_name in node.param_list:
 				self.put_scope_var(param_name)
-=======
-			self.scopes.append(node.name)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 			num_params = len(node.param_list)
 			self.emit('%s.%d:' % (node.name, num_params))
 			node.func_block.accept(self)
@@ -1222,7 +1108,6 @@ class CodeGen:
 					elem.accept(self)
 				self.emit('mk_hash', str(num_elems))
 			else:
-<<<<<<< HEAD
 				if self.is_const_array(node):
 					# Array with only constants
 					self.const_data.append(node)
@@ -1265,20 +1150,6 @@ class CodeGen:
 			
 		for code_item in self.generated:
 			out_line(code_item)
-=======
-				for elem in node.elements:
-					elem.accept(self)
-				self.emit('mk_array', str(num_elems))
-		elif isinstance(node, ArrayIndexNode):
-			# Array indexing
-			node.index_expr.accept(self)
-			self.emit('get', str(node.name))
-		elif isinstance(node, UseVariableNode):
-			# Directive for using global variable(s)
-			self.emit('; Using globals:', ', '.join(node.variables))
-		else:
-			raise Exception('Unknown node type (%s)!' % type(node))
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 
 def parse_file(file_name):
 	""" Parse code from stdin """
@@ -1295,12 +1166,8 @@ def parse_file(file_name):
 	ast = parser.parse_to_ast()
 	
 	# Generate code
-<<<<<<< HEAD
 	generator = CodeGen(ast, sys.stdout)
 	generator.load_module_defs('builtin')
-=======
-	generator = CodeGen(ast)
->>>>>>> c541abd72b4a54a3a80d2e91c1bbcbb80f762bb8
 	generator.generate()
 
 if __name__ == '__main__':

@@ -299,8 +299,7 @@ class ArrayIndexNode(ASTNode):
 	"""Array indexing node """
 	
 	def __init__(self, id, expr):
-		# TODO: name (string) -> array_expr (ASTNode)
-		self.name = id
+		self.array_expr = id
 		self.index_expr = expr
 		
 class UseVariableNode(ASTNode):
@@ -355,7 +354,8 @@ class Parser:
 				self.parse_expr(src)
 				if src.t_type != T_RSBR:
 					raise InvalidToken(src)
-				result = ArrayIndexNode(ident, self.stack.pop())
+				array_var = VariableNode(ident)
+				result = ArrayIndexNode(array_var, self.stack.pop())
 			else:
 				src.hold()
 				result = VariableNode(ident)
@@ -778,8 +778,23 @@ class Parser:
 		
 		return ast
 		
+class Scope:
+	""" Global or function scope """
+	
+	def __init__(self, name):
+		self.name = name
+		self.variables = dict()
+		self.global_refs = set()
+		
 class CodeGen:
-	""" Code generator """
+	""" Code generator with some optimizations """
+	
+	
+	DEFS_FILEEXT = '.ld'
+	
+	# External definitions type
+	EXT_CONST = 'const'
+	EXT_FUNC = 'func'
 	
 	# Section identifiers
 	SECTION_DATA = '.data'
@@ -794,50 +809,114 @@ class CodeGen:
 		'&': 'concat'
 	}
 	
-	JMP_TYPES = {
+	JMP_OPCODES = {
 		'<': 'jmplt', '<=': 'jmple',
 		'>': 'jmpgt', '>=': 'jmpge',
 		'==': 'jmpeq', '!=': 'jmpne'
 	}
 	
-	def __init__(self, root_node):
+	CMP_INVERSE = {
+		'<': '>=', '>': '<=',
+		'<=': '>', '>=': '<',
+		'==': '!=', '!=': '=='
+	}
+	
+	def __init__(self, root_node, out_file):
 		self.ast = root_node
+		self.output_file = out_file
+		self.ext_defines = {
+			'false': CodeGen.EXT_CONST,
+			'true': CodeGen.EXT_CONST
+		}
 		self.scopes = []
+		# Indexes of opcodes with global variables
+		self.global_var_gen_idxs = []
+		self.generated = []
+		self.const_data = []
 		self.entry_node = None
 		self.last_op = None
 		self.last_jmp_id = 0
 		
-	def get_scope():
+	def load_module_defs(self, mod_name):
+		""" Load module function definitions """
+		
+		mod_filename = mod_name + CodeGen.DEFS_FILEEXT
+		defs_file = open(mod_filename)
+		
+		for def_item in defs_file.xreadlines():
+			name = def_item.strip()
+			if len(name) > 0 and name[0] != '#':
+				if '.' in name:
+					func_name = name[0:name.find('.')]
+					self.ext_defines[func_name] = CodeGen.EXT_FUNC
+				else:
+					self.ext_defines[name] = CodeGen.EXT_CONST
+				
+		defs_file.close()
+		
+	def get_scope(self):
 		""" Get current scope name """
 		
 		return self.scopes[len(self.scopes) - 1]
-
-	def new_jmp_id(self):
-		self.last_jmp_id += 1
-		return self.last_jmp_id
-
-	def emit(self, op, args_str = None):
-		""" Emit opcode """
 		
-		self.last_op = op
-		output = op
-		if args_str != None:
-			output += ' ' + args_str
+	def put_scope_var(self, var_name):
+		""" Put variable in current scope """
 		
-		print(output)
-		
-	def emit_if_cond(self, node, true_branch_label):
-		""" Emit condition expression """
-		
-		if isinstance(node.cond_expr, CMPNode):
-			node.cond_expr.l.accept(self)
-			node.cond_expr.r.accept(self)
-			jmp_op = CodeGen.JMP_TYPES[node.cond_expr.op]
-			self.emit(jmp_op, true_branch_label)
+		vars = self.get_scope().variables
+		if vars.has_key(var_name):
+			return vars[var_name]
+		elif var_name in self.get_scope().global_refs:
+			# Index needs to be resolved later
+			return None
 		else:
-			node.cond_expr.accept(self)
-			self.emit('cmp 1')
-			self.emit('jmpeq', true_branch_label)
+			var_idx = len(vars)
+			vars[var_name] = var_idx
+			return var_idx
+		
+	def get_scope_var(self, var_name):
+		""" Get index of variable from current scope """
+		
+		vars = self.get_scope().variables
+		if vars.has_key(var_name):
+			return vars[var_name]
+		else:
+			# Variable not found in current scope
+			# Check if global, otherwise fail
+			scope = self.get_scope()
+			if var_name in scope.global_refs:
+				# Index need to be resolved later
+				return None
+			else:
+				msg = 'Variable or constant %s not found in scope %s!' \
+					  % (var_name, self.get_scope())
+				raise Exception(error_msg)
+			
+	def is_const_array(self, node):
+		""" Check if array contains only const values """
+		
+		for elem in node.elements:
+			if not isinstance(elem, NumberNode) and \
+			   not isinstance(elem, StringNode):
+				return False
+				
+		return True
+		
+	def add_global_var_ref(self, op, name):
+		""" Add reference to global variable """
+		
+		self.global_var_gen_idxs.append(len(self.generated))
+		self.emit('!%s.global' % op, name)
+		
+	def resolve_global_vars(self):
+		""" Resolve global variable names to it's indexes """
+		
+		global_scope = self.scopes[0]
+		
+		for gen_idx in self.global_var_gen_idxs:
+			op, var_name = self.generated[gen_idx].split()
+			var_idx = global_scope.variables[var_name]
+			resolved_opcode = '%s %d' % (op[1:], var_idx)
+			self.generated[gen_idx] = resolved_opcode
 		
 	def generate(self):
 		""" Start code generation """
@@ -856,9 +935,47 @@ class CodeGen:
 				self.entry_node = stmt
 				break
 		
-		self.scopes.append('global')
+		# Traverse AST
+		self.scopes.append(Scope('global'))
 		self.ast.accept(self)
+		
+		# Resolve global variable indexes
+		if len(self.global_var_gen_idxs) > 0:
+			self.resolve_global_vars()
+		
+		# Write generated code to output file
+		self.write_out()
 
+	def new_jmp_id(self):
+		self.last_jmp_id += 1
+		return self.last_jmp_id
+
+	def emit(self, op, args_str = None):
+		""" Emit opcode """
+		
+		self.last_op = op
+		output = op
+		if args_str != None:
+			output += ' ' + args_str
+		
+		self.generated.append(output)
+		
+	def emit_if_common(self, node, has_else, branch_label):
+		""" Emit common part of if expression and if statement """
+		
+		if isinstance(node.cond_expr, CMPNode):
+			node.cond_expr.l.accept(self)
+			node.cond_expr.r.accept(self)
+			cmp_op = node.cond_expr.op if has_else \
+				     else CodeGen.CMP_INVERSE[node.cond_expr.op]
+			jmp_op = CodeGen.JMP_OPCODES[cmp_op]
+			self.emit(jmp_op, branch_label)
+		else:
+			node.cond_expr.accept(self)
+			cmp_arg = 'true' if has_else else 'false'
+			self.emit('load.const', cmp_arg)
+			self.emit('jmpeq', branch_label)
+		
 	def visit(self, node):
 		""" Visit AST node and generate code """
 		
@@ -885,12 +1002,24 @@ class CodeGen:
 			self.emit('load', node.value)
 		elif isinstance(node, VariableNode):
 			# Variable identifier
-			self.emit('load', node.name)
+			if self.ext_defines.has_key(node.name):
+				self.emit('load.const', node.name)
+			else:
+				var_idx = self.get_scope_var(node.name)
+				if var_idx is not None:
+					self.emit('load', '#' + str(var_idx))
+				else:
+					self.add_global_var_ref('load', node.name)
 		elif isinstance(node, CallNode):
 			# Function call
 			for arg_expr in node.call_args:
 				arg_expr.accept(self)
+			if self.ext_defines.has_key(node.name):
+				# External function
 				self.emit('call', node.name)
+			else:
+				# Defined function
+				self.emit('invoke', node.name)
 		elif isinstance(node, MinusNode):
 			# Math inversion
 			node.expr.accept(self)
@@ -907,12 +1036,16 @@ class CodeGen:
 		elif isinstance(node, AssignNode):
 			# Assignment to variable
 			node.expr.accept(self)
-			self.emit('store', node.name)
+			var_idx = self.put_scope_var(node.name)
+			if var_idx is not None:
+				self.emit('store', str(var_idx))
+			else:
+				self.add_global_var_ref('store', node.name)
 		elif isinstance(node, CondNode):
 			# If expression
 			id = self.new_jmp_id()
 			true_label = 'IFE_TB_%d' % id
-			self.emit_if_cond(node, true_label)
+			self.emit_if_common(node, True, true_label)
 			node.false_expr.accept(self)
 			self.emit('jmp', 'IFE_%d' % id)
 			self.emit(true_label + ':')
@@ -921,20 +1054,23 @@ class CodeGen:
 		elif isinstance(node, IfNode):
 			# If statement
 			id = self.new_jmp_id()
-			true_label = 'IF_TB_%d' % id
-			self.emit_if_cond(node, true_label)
+			end_label = 'IF_%d' % id
 			if node.false_branch is not None:
+				true_label = 'IF_TB_%d' % id
+				self.emit_if_common(node, True, true_label)
 				node.false_branch.accept(self)
 				self.emit('jmp', 'IF_%d' % id)
-			self.emit(true_label + ':')
+				self.emit(true_label + ':')
+			else:
+				self.emit_if_common(node, False, end_label)
 			node.true_branch.accept(self)
-			self.emit('IF_%d:' % id)
+			self.emit(end_label + ':')
 		elif isinstance(node, ForWhileNode):
 			# While loop statement
 			id = self.new_jmp_id()
 			true_label = 'FOR_LOOP_%d' % id
 			self.emit('FOR_COND_%d:' % id)
-			self.emit_if_cond(node, true_label)
+			self.emit_if_common(node, True, true_label)
 			self.emit('jmp', 'FOR_END_%d' % id)
 			self.emit(true_label + ':')
 			node.loop_block.accept(self)
@@ -942,7 +1078,9 @@ class CodeGen:
 			self.emit('FOR_END_%d:' % id)
 		elif isinstance(node, FuncNode):
 			# Function definition
-			self.scopes.append(node.name)
+			self.scopes.append(Scope(node.name))
+			for param_name in node.param_list:
+				self.put_scope_var(param_name)
 			num_params = len(node.param_list)
 			self.emit('%s.%d:' % (node.name, num_params))
 			node.func_block.accept(self)
@@ -970,18 +1108,48 @@ class CodeGen:
 					elem.accept(self)
 				self.emit('mk_hash', str(num_elems))
 			else:
-				for elem in node.elements:
-					elem.accept(self)
-				self.emit('mk_array', str(num_elems))
+				if self.is_const_array(node):
+					# Array with only constants
+					self.const_data.append(node)
+					array_idx = len(self.const_data) - 1
+					self.emit('load.const', str(array_idx))
+				else:
+					# Array with expressions/variables/mixed
+					for elem in node.elements:
+						elem.accept(self)
+					self.emit('mk_array', str(num_elems))
 		elif isinstance(node, ArrayIndexNode):
 			# Array indexing
+			node.array_expr.accept(self)
 			node.index_expr.accept(self)
-			self.emit('get', str(node.name))
+			self.emit('get')
 		elif isinstance(node, UseVariableNode):
 			# Directive for using global variable(s)
-			self.emit('; Using globals:', ', '.join(node.variables))
+			scope = self.get_scope()
+			scope.global_refs.update(node.variables)
 		else:
 			raise Exception('Unknown node type (%s)!' % type(node))
+			
+	def write_out(self):
+		""" Output generated code to file """
+		
+		def out_line(line):
+			self.output_file.write(line + "\n")
+			
+		def out_const_array(array):
+			elem_values = [str(elem.value) for elem in array.elements]
+			out_line(' '.join(elem_values))
+		
+		if len(self.const_data) > 0:
+			out_line(CodeGen.SECTION_DATA)
+			for data_item in self.const_data:
+				if isinstance(data_item, ArrayNode):
+					out_const_array(data_item)
+				else:
+					raise Exception('Only constant array supported as data!')
+			
+		for code_item in self.generated:
+			out_line(code_item)
 
 def parse_file(file_name):
 	""" Parse code from stdin """
@@ -998,7 +1166,8 @@ def parse_file(file_name):
 	ast = parser.parse_to_ast()
 	
 	# Generate code
-	generator = CodeGen(ast)
+	generator = CodeGen(ast, sys.stdout)
+	generator.load_module_defs('builtin')
 	generator.generate()
 
 if __name__ == '__main__':

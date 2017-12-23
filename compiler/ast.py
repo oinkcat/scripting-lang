@@ -131,6 +131,13 @@ class ForEachNode(ASTNode):
         self.var_name = var_name
         self.loop_block = block
 
+class LoopControlNode(ASTNode):
+    """ Loop flow control: break/continue """
+
+    def __init__(self, is_continue, depth = 1):
+        self.continuing = is_continue
+        self.depth = depth
+
 class FuncNode(ASTNode):
     """ Function definition """
     

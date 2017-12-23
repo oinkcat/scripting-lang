@@ -9,6 +9,7 @@ TOKEN_NAMES = [
     'T_LBR', 'T_RBR', 'T_LSBR', 'T_RSBR', 'T_LCBR', 'T_RCBR',
     'T_SPACE', 'T_COMMENT', 'T_IDENT', 'T_NOT',
     'T_IF', 'T_ELSEIF', 'T_ELSE', 'T_FOR',
+    'T_BREAK', 'T_CONTINUE',
     'T_FUNC', 'T_RETURN', 'T_END', 'T_USE',
     'T_IMPORT', 'T_NATIVE',
     'T_EMIT', 'T_AS', 'T_LOGIC'
@@ -68,6 +69,7 @@ class Tokenizer:
     # Simple literal templates
     TMPL_WORD = '(not)|' + \
                 '(if)|(elsif)|(else)|(for)|' + \
+                '(break)|(continue)|' + \
                 '(func)|(return)|(end)|(use)|(import)|(native)|' + \
                 '(emit)|(as)|' + \
                 '(or|and|xor)'

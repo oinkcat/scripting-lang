@@ -458,6 +458,17 @@ class Parser:
         elif src.t_type == T_FOR:
             # Loop
             return self.parse_for(src)
+        elif src.t_type == T_BREAK or src.t_type == T_CONTINUE:
+            # Loop flow control
+            is_continue = src.t_type == T_CONTINUE
+            src.next()
+            loop_depth = 1
+            if src.t_type == T_NUMBER:
+                loop_depth = int(src.t_val)
+                src.next()
+            else:
+                src.hold()
+            return LoopControlNode(is_continue, loop_depth)
         elif src.t_type == T_RETURN:
             # Return from function
             src.next()

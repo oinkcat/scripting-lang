@@ -9,6 +9,23 @@ class Scope:
         self.name = name
         self.variables = dict()
         self.global_refs = set()
+        self.loops = list()
+
+    def push_loop(self, id):
+        """ Push current loop id """
+        self.loops.append(id)
+
+    def pop_loop(self):
+        """ Pop current loop name """
+        self.loops.pop()
+
+    def get_loop_id(self, depth = 1):
+        """ Get current or enclosing loop id """
+
+        if len(self.loops) >= depth:
+            return self.loops[-depth]
+        else:
+            raise Exception('Can not break or continue outside the loop!')
         
 class CodeGen:
     """ Code generator with some optimizations """
@@ -385,6 +402,8 @@ class CodeGen:
         """ Visit for (while) loop node """
 
         id = self.new_jmp_id()
+        self.get_scope().push_loop(id)
+
         true_label = 'FOR_LOOP_%d' % id
         self.emit('FOR_COND_%d:' % id)
         self.emit_if_cond(node.cond_expr, True, true_label)
@@ -393,11 +412,15 @@ class CodeGen:
         node.loop_block.accept(self)
         self.emit('jmp', 'FOR_COND_%d' % id)
         self.emit('FOR_END_%d:' % id)
+
+        self.get_scope().pop_loop()
         
     def visit_for_each_loop(self, node):
         """ Visit for (enumerative) loop node """
         
         id = self.new_jmp_id()
+        self.get_scope().push_loop(id)
+
         node.iter_expr.accept(self)
         self.emit('call', '_iter_create$')
         self.emit('FOR_COND_%d:' % id)
@@ -413,6 +436,18 @@ class CodeGen:
         self.emit('jmp', 'FOR_COND_%d' % id)
         self.emit('FOR_END_%d:' % id)
         self.emit('unload')
+
+        self.get_scope().pop_loop()
+
+    def visit_loop_ctl(self, node):
+        """ Visit loop control (break/continue) node """
+
+        loop_id = self.get_scope().get_loop_id(node.depth)
+        
+        if node.continuing:
+            self.emit('jmp', 'FOR_COND_%d' % loop_id)
+        else:
+            self.emit('jmp', 'FOR_END_%d' % loop_id)
 
     def visit_func_def(self, node):
         """ Visit function definition node """
@@ -572,6 +607,9 @@ class CodeGen:
         elif isinstance(node, ForEachNode):
             # Iterative loop statement
             self.visit_for_each_loop(node)
+        elif isinstance(node, LoopControlNode):
+            # Loop flow control
+            self.visit_loop_ctl(node)
         elif isinstance(node, FuncNode):
             # Function definition
             self.visit_func_def(node)

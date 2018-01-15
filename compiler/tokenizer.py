@@ -12,7 +12,8 @@ TOKEN_NAMES = [
     'T_BREAK', 'T_CONTINUE',
     'T_FUNC', 'T_RETURN', 'T_END', 'T_USE',
     'T_IMPORT', 'T_NATIVE',
-    'T_EMIT', 'T_AS', 'T_LOGIC'
+    'T_EMIT', 'T_AS', 'T_LOGIC',
+    'T_FUNCREF'
 ]
 
 # Special token values
@@ -72,7 +73,8 @@ class Tokenizer:
                 '(break)|(continue)|' + \
                 '(func)|(return)|(end)|(use)|(import)|(native)|' + \
                 '(emit)|(as)|' + \
-                '(or|and|xor)'
+                '(or|and|xor)|' + \
+                '(ref)'
 
     def __init__(self, source):
         self.re_main = re.compile(Tokenizer.TMPL_MAIN, re.IGNORECASE)

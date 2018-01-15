@@ -1,5 +1,6 @@
 """ Code generator """
 import os
+import linker
 from ast import *
 
 class Scope:
@@ -41,14 +42,6 @@ class CodeGen:
     # External definitions type
     EXT_CONST = 'const'
     EXT_FUNC = 'func'
-    
-    # Section identifiers
-    SECTION_REF = '.ref'
-    SECTION_IMPORT = '.import'
-    SECTION_SHARED = '.shared'
-    SECTION_DATA = '.data'
-    SECTION_FUNCS = '.defs'
-    SECTION_ENTRY = '.entry'
 
     COMMON_OPS = { 
         '+': 'add', '-': 'sub', 
@@ -70,9 +63,9 @@ class CodeGen:
         '==': '!=', '!=': '=='
     }
     
-    def __init__(self, root_node, out_file):
+    def __init__(self, root_node, name):
+        self.module_name = name
         self.ast = root_node
-        self.output_file = out_file
         self.scopes = []
         self.defined_funcs = set()
         self.functions_refs = set()
@@ -192,7 +185,9 @@ class CodeGen:
     def check_function_refs(self):
         """ Check referenced function names """
 
-        undefined = self.functions_refs.difference(self.defined_funcs)
+        # Functions defined in this module
+        funcs_defined = filter(lambda r: '::' not in r, self.functions_refs)
+        undefined = set(funcs_defined).difference(self.defined_funcs)
 
         if len(undefined) > 0:
             func_names = ', '.join(undefined)
@@ -208,7 +203,7 @@ class CodeGen:
         root_statements = self.ast.statements
         for node in root_statements:
             if isinstance(node, FuncNode):
-                self.emit(CodeGen.SECTION_FUNCS)
+                self.emit(linker.SECTION_DEFS)
                 break
             elif not node.is_directive():
                 break
@@ -231,8 +226,8 @@ class CodeGen:
         # Check function references
         self.check_function_refs()
         
-        # Write generated code to output file
-        self.write_out()
+        # Construct compiled module
+        return self.write_out()
 
     def new_jmp_id(self):
         self.last_jmp_id += 1
@@ -303,7 +298,7 @@ class CodeGen:
             arg_expr.accept(self)
 
         # Module name
-        if isinstance(node.call_expr,IdentifierNode):
+        if isinstance(node.call_expr, IdentifierNode):
             mod_name = CodeGen.BUILTIN_MODULE_NAME
             func_name = node.call_expr.name
         elif isinstance(node.call_expr, ItemGetNode):
@@ -315,11 +310,11 @@ class CodeGen:
             self.emit('call', self.qualified_name(mod_name, func_name))
         else:
             # User defined function
-            if isinstance(node.call_expr, IdentifierNode):
-                self.functions_refs.add(func_name)
-                self.emit('invoke', func_name)
-            else:
-                raise Exception("User defined modules not yet implemented!")
+            udf_name = func_name \
+                if isinstance(node.call_expr, IdentifierNode) \
+                else '%s::%s' % (mod_name, func_name)
+            self.functions_refs.add(udf_name)
+            self.emit('invoke', udf_name)
 
     def visit_math_inv(self, node):
         """ Visit math inversion node """
@@ -551,19 +546,20 @@ class CodeGen:
     def visit_add_module_ref(self, node):
         """ Visit module reference node """
 
-        if node.native:
-            for mod_name in node.modules:
+        for mod_name in node.modules:
+            if node.native:
                 if mod_name not in self.native_refs:
                     self.load_module_defs(mod_name)
-        else:
-            raise NotImplementedError('Only native modules is implemented!')
+            else:
+                if mod_name not in self.imports:
+                    self.imports.append(mod_name)
 
     def visit(self, node):
         """ Visit AST node and generate code """
         
         # Emit entry point section marker
         if node == self.entry_node:
-            self.emit(CodeGen.SECTION_ENTRY)
+            self.emit(linker.SECTION_MAIN)
         
         if isinstance(node, MathNode) or \
            isinstance(node, CMPNode) or \
@@ -637,35 +633,47 @@ class CodeGen:
             raise Exception('Unknown node type (%s)!' % type(node))
             
     def write_out(self):
-        """ Output generated code to file """
+        """ Output compiled module contents """
         
-        def out_line(line):
-            self.output_file.write(line + "\n")
-            
-        def out_const_array(array):
-            elem_values = [str(elem.value) for elem in array.elements]
-            out_line(' '.join(elem_values))
+        out_module = linker.CompiledModule(self.module_name)
+        out_module.n_globals = len(self.scopes[0].variables)
+
+        # Script module imports
+        if len(self.imports) > 0:
+            out_module.imports = self.imports
 
         # Native module references section
         if len(self.native_refs) > 0:
-            out_line(CodeGen.SECTION_REF)
-            for mod_name in self.native_refs:
-                out_line(mod_name)
+            out_module.refs = self.native_refs
             
         # Shared variables section
         if len(self.shared_vars) > 0:
-            out_line(CodeGen.SECTION_SHARED)
-            for var_name in self.shared_vars:
-                out_line(var_name)
+            out_module.shared_vars = self.shared_vars
         
         # Constant data section
         if len(self.const_data) > 0:
-            out_line(CodeGen.SECTION_DATA)
             for data_item in self.const_data:
                 if isinstance(data_item, ArrayNode):
-                    out_const_array(data_item)
+                    values = [str(elem.value) for elem in data_item.elements]
+                    out_module.const_data.append(' '.join(values))
                 else:
                     raise Exception('Only constant array supported as data!')
-            
-        for code_item in self.generated:
-            out_line(code_item)
+        
+        main_code = False
+        func_info = None
+
+        # Output code
+        for line in self.generated:
+            if line == linker.SECTION_MAIN:
+                main_code = True
+            elif ('.' in line) and line.endswith(':'):
+                func_info = [line, list()]
+                out_module.functions.append(func_info)
+            elif not line.startswith('.'):
+                code_item = line.split(' ', 1)
+                if main_code:
+                    out_module.code_lines.append(code_item)
+                else:
+                    func_info[1].append(code_item)
+
+        return out_module

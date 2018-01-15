@@ -194,3 +194,10 @@ class ImportModuleNode(ASTNode):
     def __init__(self, is_native, names):
         self.native = is_native
         self.modules = names
+
+class FunctionRefNode(ASTNode):
+    """ Function reference node """
+
+    def __init__(self, name, mod_name = None):
+        self.func = func_name
+        self.module = mod_name

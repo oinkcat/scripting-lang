@@ -1,24 +1,63 @@
 """ Front end """
 import sys
+import os
 from tokenizer import Tokenizer
 from parser import Parser
 from code_gen import CodeGen
+from linker import Linker
 
-def compile_buffer(input, output):
+class LocalDependencyProvider:
+    """ Provide compiled modules """
+
+    EXT_SOURCE = '.l'
+    EXT_COMPILED = '.lb'
+
+    def __init__(self, src_filename):
+        if src_filename is not None:
+            self.base_dir = os.path.dirname(src_filename)
+        else:
+            self.base_dir = os.path.expanduser('~')
+
+    def get_dependency(self, mod_name):
+        """ Get dependent module """
+
+        dep_file = self._get_local_file(mod_name, self.__class__.EXT_SOURCE)
+        return compile_module_stream(mod_name, dep_file)
+
+    def _get_local_file(self, name, ext):
+        mod_file_path = os.path.join(self.base_dir, name + ext)
+
+        if os.path.isfile(mod_file_path):
+            return open(mod_file_path, 'r')
+        else:
+            raise Exception('Required module %s not found!' % name)
+
+
+def compile_module_stream(name, stream):
+    """ Compile one module from source stream """
+
+    with stream:
+        # Parse module source
+        tok = Tokenizer(stream.xreadlines())
+        parser = Parser(tok)
+        ast = parser.parse_to_ast()
+    
+        # Generate IL code
+        generator = CodeGen(ast, name)
+        generator.load_module_defs('$builtin')
+        compiled = generator.generate()
+
+        return compiled
+
+
+def compile_buffer(input, output, resolver):
     """ Compile code from input buffer and output to another buffer """
 
-    source = input.readlines()
-    input.close()
-        
-    # Parse input
-    tok = Tokenizer(source)
-    parser = Parser(tok)
-    ast = parser.parse_to_ast()
-    
-    # Generate code
-    generator = CodeGen(ast, output)
-    generator.load_module_defs('$builtin')
-    generator.generate()
+    compiled_main = compile_module_stream('main', input)
+    # Link modules
+    linker = Linker(compiled_main, resolver)
+    compiled_whole = linker.link()
+    compiled_whole.save(output)
 
 
 def compile_file(in_file_name, out_file_name):
@@ -28,7 +67,9 @@ def compile_file(in_file_name, out_file_name):
                                  else sys.stdin
     out_file = open(out_file_name, 'w') if out_file_name is not None \
                                         else sys.stdout
-    compile_buffer(in_file, out_file)
+
+    files_resolver = LocalDependencyProvider(in_file_name)
+    compile_buffer(in_file, out_file, files_resolver)
 
 if __name__ == '__main__':
     in_file_name = sys.argv[1] if len(sys.argv) > 1 else None

@@ -200,7 +200,7 @@ class CodeGen:
         for gen_idx in self.global_var_gen_idxs:
             op, var_name, ln = self.generated[gen_idx]
             var_idx = global_scope.variables[var_name]
-            resolved_opcode = [op[1:], var_idx, ln]
+            resolved_opcode = [op[1:], str(var_idx), ln]
             self.generated[gen_idx] = resolved_opcode
 
     def check_function_refs(self):
@@ -361,7 +361,7 @@ class CodeGen:
         """ Visit math inversion node """
         
         node.expr.accept(self)
-        self.emit('load -1')
+        self.emit('load', '-1')
         self.emit('mul')
 
     def visit_logic_inv(self, node):
@@ -446,7 +446,7 @@ class CodeGen:
                 cond[1].accept(self)
                 if jmp_label != end_label:
                     self.emit('jmp', end_label)
-                    self.emit_label(jmp_label + ':')
+                    self.emit_label(jmp_label)
         # Exit label
         self.emit_label(end_label)
 

@@ -7,7 +7,7 @@ from code_gen import CodeGen
 from linker import Linker
 
 class LocalDependencyProvider:
-    """ Provide compiled modules """
+    """ Provide local importing modules """
 
     EXT_SOURCE = '.l'
     EXT_COMPILED = '.lb'

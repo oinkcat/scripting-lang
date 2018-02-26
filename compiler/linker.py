@@ -4,6 +4,8 @@ import sys
 import re
 import os
 
+OUT_DEBUG_MSG = True
+
 FILE_EXT = '.lb'
 
 SECTION_REFS = '.refs'
@@ -13,7 +15,8 @@ SECTION_DATA = '.data'
 SECTION_DEFS = '.defs'
 SECTION_MAIN = '.entry'
 
-OP_INVOKE = 'invoke'
+OP_CALL_UDF = 'call.udf'
+OP_REF_UDF = 'mk_ref.udf'
 OP_LDCONST = 'load.const'
 OP_LOAD = 'load'
 OP_STORE = 'store'
@@ -25,7 +28,7 @@ class CompiledModule:
     
     def __init__(self, name):
         self.name = name
-        self.refs = list()
+        self.refs = []
         self.imports = []
         self.shared_vars = []
         self.const_data = []
@@ -53,14 +56,16 @@ class CompiledModule:
             code_item = code_lines[i]
             opcode = code_item[0]
             
-            if opcode == OP_INVOKE:
+            if (opcode == OP_CALL_UDF) or (opcode == OP_REF_UDF):
                 func_name_parts = code_item[1].split('::')
                 is_bare = len(func_name_parts) == 1
                 if is_bare and (func_name_parts[0] not in self.imports):
                     code_item[1] = '%s::%s' % (self.name, code_item[1])
-            elif opcode == OP_LDCONST:
-                idx = int(code_item[1])
-                code_item[1] = str(idx + offsets['data'])
+            elif (opcode == OP_LDCONST):
+                # If represents index of constant data array
+                if all(c.isdigit() for c in code_item[1]):
+                    idx = int(code_item[1])
+                    code_item[1] = str(idx + offsets['data'])
             elif root and opcode == OP_LOAD and code_item[1][0] == '#':
                 idx = int(code_item[1][1:])
                 code_item[1] = str(idx + offsets['global'])
@@ -99,9 +104,15 @@ class CompiledModule:
                     append(item)
                     
         def write_code(code):
-            for line in code:
-                append(' '.join(line))
+            for item in code:
+                cmd = ' '.join(item[0:2]) if item[1] is not None \
+                                          else item[0]
+                if item[2] is not None:
+                    append('%s ; %s' % (cmd, item[2]))
+                else:
+                    append(cmd)
         
+        write_section(SECTION_REFS, self.refs)
         write_section(SECTION_IMPORTS, self.imports)
         write_section(SECTION_SHARED, self.shared_vars)
         write_section(SECTION_DATA, self.const_data)
@@ -226,6 +237,10 @@ class Merger:
         
         src.transform(self.offsets)
         self.offsets['global'] += src.n_globals
+
+        # Native module references
+        dest.refs.extend(src.refs)
+        dest.refs = list(set(dest.refs))
         
         # Shared variables
         dest.shared_vars.extend(src.shared_vars)
@@ -258,6 +273,13 @@ class Linker:
         self.all_imports = set()
         self.loader = CompiledModuleLoader()
         self.merger = Merger()
+
+    def out_debug(self, msg, *args):
+        """ Output debug message """
+
+        if OUT_DEBUG_MSG:
+            line = "%s\n" % msg
+            sys.stderr.write(line % args)
         
     def _get_full_name(self, mod_name):
         """ Get full name of module file """
@@ -266,7 +288,7 @@ class Linker:
     def merge_imports(self, target_mod):
         """ Link module with it's imports """
         
-        print('Module: %s' % target_mod.name)
+        self.out_debug('Compiled module: %s', target_mod.name)
         
         result_mod = target_mod
         
@@ -278,7 +300,8 @@ class Linker:
             self.all_imports.add(ref_mod.name)
             ref_mod = self.merge_imports(ref_mod)
             result_mod = self.merger.merge(result_mod, ref_mod)
-            print('%s merged with %s' % (target_mod.name, ref_mod.name))
+            
+            self.out_debug('%s linked with %s', target_mod.name, ref_mod.name)
             
         return result_mod
         

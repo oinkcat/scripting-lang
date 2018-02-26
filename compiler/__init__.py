@@ -18,6 +18,10 @@ class LocalDependencyProvider:
         else:
             self.base_dir = os.path.expanduser('~')
 
+        # Library modules path
+        compiler_path = os.path.dirname(__file__)
+        self.lib_path = os.path.realpath(compiler_path + '/../lib')
+
     def get_dependency(self, mod_name):
         """ Get dependent module """
 
@@ -25,12 +29,19 @@ class LocalDependencyProvider:
         return compile_module_stream(mod_name, dep_file)
 
     def _get_local_file(self, name, ext):
-        mod_file_path = os.path.join(self.base_dir, name + ext)
+        mod_filename = name + ext
+        mod_file_path = os.path.join(self.base_dir, mod_filename)
 
         if os.path.isfile(mod_file_path):
-            return open(mod_file_path, 'r')
+            # Check local file
+            return open(mod_file_path)
         else:
-            raise Exception('Required module %s not found!' % name)
+            # Check library file
+            lib_file_path = os.path.join(self.lib_path, mod_filename)
+            if os.path.isfile(lib_file_path):
+                return open(lib_file_path)
+            else:
+                raise Exception('Required module %s not found!' % name)
 
 
 def compile_module_stream(name, stream):
@@ -42,7 +53,7 @@ def compile_module_stream(name, stream):
         parser = Parser(tok)
         ast = parser.parse_to_ast()
     
-        # Generate IL code
+        # Generate intermediate code
         generator = CodeGen(ast, name)
         generator.load_module_defs('$builtin')
         compiled = generator.generate()
@@ -72,6 +83,7 @@ def compile_file(in_file_name, out_file_name):
     compile_buffer(in_file, out_file, files_resolver)
 
 if __name__ == '__main__':
-    in_file_name = sys.argv[1] if len(sys.argv) > 1 else None
+    test_filename = '/home/igor/shared/compiler_service/tests/obj.l'
+    in_file_name = sys.argv[1] if len(sys.argv) > 1 else test_filename
     out_file_name = sys.argv[2] if len(sys.argv) > 2 else None
     compile_file(in_file_name, out_file_name)

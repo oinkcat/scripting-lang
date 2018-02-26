@@ -26,7 +26,14 @@ class Scope:
         if len(self.loops) >= depth:
             return self.loops[-depth]
         else:
-            raise Exception('Can not break or continue outside the loop!')
+            return None
+
+class CodeGenError(Exception):
+    """ Error occured while code generation """
+
+    def __init__(self, node, message):
+        dbg_msg = '%s\nLine: %d' % (message, node.line)
+        Exception.__init__(self, dbg_msg)
         
 class CodeGen:
     """ Code generator with some optimizations """
@@ -65,6 +72,7 @@ class CodeGen:
     
     def __init__(self, root_node, name):
         self.module_name = name
+        self.nodes_stack = []
         self.ast = root_node
         self.scopes = []
         self.defined_funcs = set()
@@ -104,6 +112,11 @@ class CodeGen:
         self.native_refs[mod_name] = contents
         defs_file.close()
 
+    def is_module(self, name):
+        """ Check if name belongs to module """
+
+        return (name in self.native_refs) or (name in self.imports)
+
     def is_native_func(self, module_name, name):
         """ Check if function with given name is native """
 
@@ -136,24 +149,32 @@ class CodeGen:
             var_idx = len(vars)
             vars[var_name] = var_idx
             return var_idx
+
+    def find_scope_var(self, var_name):
+        """ Find variable index in current scope """
+
+        scope = self.get_scope()
+        vars = scope.variables
+        if vars.has_key(var_name):
+            return vars[var_name]
+        else:
+            # Find in global scope
+            if var_name in scope.global_refs:
+                # Index need to be resolved later
+                return -1
+            else:
+                return None
         
     def get_scope_var(self, var_name):
         """ Get index of variable from current scope """
         
-        vars = self.get_scope().variables
-        if vars.has_key(var_name):
-            return vars[var_name]
+        var_idx = self.find_scope_var(var_name)
+        if var_idx is not None:
+            return var_idx if var_idx > -1 else None
         else:
-            # Variable not found in current scope
-            # Check if global, otherwise fail
-            scope = self.get_scope()
-            if var_name in scope.global_refs:
-                # Index need to be resolved later
-                return None
-            else:
-                msg = 'Variable or constant %s not found in scope %s!' \
-                      % (var_name, self.get_scope().name)
-                raise Exception(msg)
+            msg = 'Variable or constant %s not found in scope %s!' \
+                    % (var_name, self.get_scope().name)
+            raise CodeGenError(self.get_current_node(), msg)
             
     def is_const_array(self, node):
         """ Check if array contains only const values """
@@ -177,9 +198,9 @@ class CodeGen:
         global_scope = self.scopes[0]
         
         for gen_idx in self.global_var_gen_idxs:
-            op, var_name = self.generated[gen_idx].split()
+            op, var_name, ln = self.generated[gen_idx]
             var_idx = global_scope.variables[var_name]
-            resolved_opcode = '%s %d' % (op[1:], var_idx)
+            resolved_opcode = [op[1:], var_idx, ln]
             self.generated[gen_idx] = resolved_opcode
 
     def check_function_refs(self):
@@ -233,31 +254,22 @@ class CodeGen:
         self.last_jmp_id += 1
         return self.last_jmp_id
 
-    def emit(self, op, args_str = None):
+    def emit(self, op, args_str = None, supress_dbg = False):
         """ Emit opcode """
         
         self.last_op = op
-        output = op
-        if args_str != None:
-            output += ' ' + args_str
-        
-        self.generated.append(output)
-        
-    def emit_if_cond(self, cond_expr, has_else, branch_label):
-        """ Emit if statement/expression's condition """
-        
-        if isinstance(cond_expr, CMPNode):
-            cond_expr.l.accept(self)
-            cond_expr.r.accept(self)
-            cmp_op = cond_expr.op if has_else \
-                     else CodeGen.CMP_INVERSE[cond_expr.op]
-            jmp_op = CodeGen.JMP_OPCODES[cmp_op]
-            self.emit(jmp_op, branch_label)
+        if not supress_dbg:
+            top_node = self.get_current_node()
+            src_line_num = top_node.line if top_node is not None else None
         else:
-            cond_expr.accept(self)
-            cmp_arg = 'true' if has_else else 'false'
-            self.emit('load.const', cmp_arg)
-            self.emit('jmpeq', branch_label)
+            src_line_num = None
+
+        self.generated.append([op, args_str, src_line_num])
+
+    def emit_label(self, name):
+        """ Emit label definition """
+
+        self.emit(name + ':', None, True)
 
     def visit_binary_expr(self, node):
         """ Visit binary expression node """
@@ -290,6 +302,30 @@ class CodeGen:
             else:
                 self.add_global_var_ref('load', node.name)
 
+    def emit_static_function_call(self, node, mod_name, func_name):
+        """ Emit static call opcodes """
+
+        if self.is_native_func(mod_name, func_name):
+            # External function
+            self.emit('call.native', self.qualified_name(mod_name, func_name))
+        else:
+            # User defined function
+            if isinstance(node.call_expr, IdentifierNode):
+                udf_name = func_name
+            elif mod_name in self.imports:
+                udf_name = '%s::%s' % (mod_name, func_name)
+            else:
+                error_msg = 'Invalid module name: %s' % mod_name
+                raise CodeGenError(node, error_msg)
+            self.functions_refs.add(udf_name)
+            self.emit('call.udf', udf_name)
+
+    def emit_dynamic_call(self, node):
+        """ Emit dynamic call opcodes """
+
+        node.accept(self)
+        self.emit('invoke')
+
     def visit_function_call(self, node):
         """ Visit function call node """
         
@@ -299,22 +335,27 @@ class CodeGen:
 
         # Module name
         if isinstance(node.call_expr, IdentifierNode):
-            mod_name = CodeGen.BUILTIN_MODULE_NAME
-            func_name = node.call_expr.name
+            static = self.find_scope_var(node.call_expr.name) is None
+            if static:
+                mod_name = CodeGen.BUILTIN_MODULE_NAME
+                func_name = node.call_expr.name
         elif isinstance(node.call_expr, ItemGetNode):
-            mod_name = node.call_expr.array_expr.name
-            func_name = node.call_expr.index_expr.value[1:-1]
-
-        if self.is_native_func(mod_name, func_name):
-            # External function
-            self.emit('call', self.qualified_name(mod_name, func_name))
+            if isinstance(node.call_expr.array_expr, IdentifierNode):
+                container_name = node.call_expr.array_expr.name
+                static = self.find_scope_var(container_name) is None
+                if static:
+                    mod_name = node.call_expr.array_expr.name
+                    func_name = node.call_expr.index_expr.value[1:-1]
+            else:
+                static = False
         else:
-            # User defined function
-            udf_name = func_name \
-                if isinstance(node.call_expr, IdentifierNode) \
-                else '%s::%s' % (mod_name, func_name)
-            self.functions_refs.add(udf_name)
-            self.emit('invoke', udf_name)
+            static = False
+
+        # Emit code
+        if static:
+            self.emit_static_function_call(node, mod_name, func_name)
+        else:
+            self.emit_dynamic_call(node.call_expr)
 
     def visit_math_inv(self, node):
         """ Visit math inversion node """
@@ -344,6 +385,22 @@ class CodeGen:
             self.emit('store', str(var_idx))
         else:
             self.add_global_var_ref('store', node.name)
+        
+    def emit_if_cond(self, cond_expr, has_else, branch_label):
+        """ Emit if statement/expression's condition """
+        
+        if isinstance(cond_expr, CMPNode):
+            cond_expr.l.accept(self)
+            cond_expr.r.accept(self)
+            cmp_op = cond_expr.op if has_else \
+                     else CodeGen.CMP_INVERSE[cond_expr.op]
+            jmp_op = CodeGen.JMP_OPCODES[cmp_op]
+            self.emit(jmp_op, branch_label)
+        else:
+            cond_expr.accept(self)
+            cmp_arg = 'true' if has_else else 'false'
+            self.emit('load.const', cmp_arg)
+            self.emit('jmpeq', branch_label)
 
     def visit_if_expr(self, node):
         """ Visit if expression node """
@@ -355,9 +412,9 @@ class CodeGen:
         self.emit_if_cond(node.cond_expr, True, true_label)
         node.false_expr.accept(self)
         self.emit('jmp', end_label)
-        self.emit(true_label + ':')
+        self.emit_label(true_label)
         node.true_expr.accept(self)
-        self.emit(end_label + ':')
+        self.emit_label(end_label)
 
     def visit_if_statement(self, node):
         """ Visit if statement node """
@@ -375,7 +432,7 @@ class CodeGen:
             node.else_branch.accept(self)
             self.emit('jmp', end_label)
             for idx, cond in enumerate(node.cond_branches):
-                self.emit('IF_C_%d_%d:' % (id, idx + 1))
+                self.emit_label('IF_C_%d_%d' % (id, idx + 1))
                 cond[1].accept(self)
                 if idx < len(node.cond_branches) - 1:
                     self.emit('jmp', end_label)
@@ -389,9 +446,9 @@ class CodeGen:
                 cond[1].accept(self)
                 if jmp_label != end_label:
                     self.emit('jmp', end_label)
-                    self.emit(jmp_label + ':')
+                    self.emit_label(jmp_label + ':')
         # Exit label
-        self.emit(end_label + ':')
+        self.emit_label(end_label)
 
     def visit_for_while_loop(self, node):
         """ Visit for (while) loop node """
@@ -400,13 +457,13 @@ class CodeGen:
         self.get_scope().push_loop(id)
 
         true_label = 'FOR_LOOP_%d' % id
-        self.emit('FOR_COND_%d:' % id)
+        self.emit_label('FOR_COND_%d' % id)
         self.emit_if_cond(node.cond_expr, True, true_label)
         self.emit('jmp', 'FOR_END_%d' % id)
-        self.emit(true_label + ':')
+        self.emit_label(true_label)
         node.loop_block.accept(self)
         self.emit('jmp', 'FOR_COND_%d' % id)
-        self.emit('FOR_END_%d:' % id)
+        self.emit_label('FOR_END_%d' % id)
 
         self.get_scope().pop_loop()
         
@@ -417,19 +474,19 @@ class CodeGen:
         self.get_scope().push_loop(id)
 
         node.iter_expr.accept(self)
-        self.emit('call', '_iter_create$')
-        self.emit('FOR_COND_%d:' % id)
+        self.emit('call.native', '_iter_create$')
+        self.emit_label('FOR_COND_%d' % id)
         self.emit('dup')
-        self.emit('call', '_iter_hasnext$')
+        self.emit('call.native', '_iter_hasnext$')
         self.emit('load.const', 'true')
         self.emit('jmpne', 'FOR_END_%d' % id)
         self.emit('dup')
-        self.emit('call', '_iter_next$')
+        self.emit('call.native', '_iter_next$')
         var_idx = self.put_scope_var(node.var_name)
         self.emit('store', str(var_idx))
         node.loop_block.accept(self)
         self.emit('jmp', 'FOR_COND_%d' % id)
-        self.emit('FOR_END_%d:' % id)
+        self.emit_label('FOR_END_%d' % id)
         self.emit('unload')
 
         self.get_scope().pop_loop()
@@ -438,7 +495,11 @@ class CodeGen:
         """ Visit loop control (break/continue) node """
 
         loop_id = self.get_scope().get_loop_id(node.depth)
-        
+
+        if loop_id is None:
+            error_msg = 'Can not break or continue outside the loop!'
+            raise CodeGenError(node, error_msg)
+
         if node.continuing:
             self.emit('jmp', 'FOR_COND_%d' % loop_id)
         else:
@@ -452,7 +513,7 @@ class CodeGen:
         for param_name in node.param_list:
             self.put_scope_var(param_name)
         num_params = len(node.param_list)
-        self.emit('%s.%d:' % (node.name, num_params))
+        self.emit_label('%s.%d' % (node.name, num_params))
         node.func_block.accept(self)
         if not self.last_op == 'ret':
             self.emit('ret')
@@ -511,7 +572,8 @@ class CodeGen:
                 self.emit('load.const', full_name)
             else:
                 args = (const_name, mod_name)
-                raise('Constant %s not found in module %s!' % args)
+                error_msg = 'Constant %s not found in module %s!' % args
+                raise CodeGenError(node, error_msg)
         else:
             node.array_expr.accept(self)
             node.index_expr.accept(self)
@@ -554,13 +616,43 @@ class CodeGen:
                 if mod_name not in self.imports:
                     self.imports.append(mod_name)
 
+    def visit_function_ref(self, node):
+        """ Visit function reference node """
+        
+        native_mod_name = node.module or CodeGen.BUILTIN_MODULE_NAME
+        if self.is_native_func(native_mod_name, node.func_name):
+            # Reference to native function
+            full_name = self.qualified_name(native_mod_name, node.func_name)
+            self.emit('mk_ref.native', full_name)
+        else:
+            # Reference to user defined function
+            # TODO: Check!
+            full_name = self.qualified_name(node.module, node.func_name) \
+                        if node.module is not None \
+                        else node.func_name
+            self.emit('mk_ref.udf', full_name)
+
+    def visit_obj(self, node):
+        """ Visit object constructor node """
+
+        node.hash.accept(self)
+        self.emit('bind_refs')
+
+    def get_current_node(self):
+        """ Get current processing node """
+        
+        num_nodes = len(self.nodes_stack)
+        return self.nodes_stack[num_nodes - 1] if num_nodes > 0 else None
+
     def visit(self, node):
         """ Visit AST node and generate code """
         
         # Emit entry point section marker
         if node == self.entry_node:
             self.emit(linker.SECTION_MAIN)
-        
+
+        self.nodes_stack.append(node)
+
         if isinstance(node, MathNode) or \
            isinstance(node, CMPNode) or \
            isinstance(node, LogicNode) or \
@@ -629,9 +721,16 @@ class CodeGen:
             self.visit_bind_extern_var(node)
         elif isinstance(node, ImportModuleNode):
             self.visit_add_module_ref(node)
+        elif isinstance(node, FunctionRefNode):
+            self.visit_function_ref(node)
+        elif isinstance(node, NewObjNode):
+            self.visit_obj(node)
         else:
-            raise Exception('Unknown node type (%s)!' % type(node))
-            
+            error_msg = 'Unknown node type (%s)!' % type(node)
+            raise CodeGenError(node, error_msg)
+
+        self.nodes_stack.pop()
+
     def write_out(self):
         """ Output compiled module contents """
         
@@ -657,20 +756,25 @@ class CodeGen:
                     values = [str(elem.value) for elem in data_item.elements]
                     out_module.const_data.append(' '.join(values))
                 else:
-                    raise Exception('Only constant array supported as data!')
+                    error_msg = 'Only constant array supported as data!'
+                    raise CodeGenError(data_item, error_msg)
         
         main_code = False
         func_info = None
 
         # Output code
-        for line in self.generated:
-            if line == linker.SECTION_MAIN:
+        for op, arg, line_no in self.generated:
+            if op == linker.SECTION_MAIN:
                 main_code = True
-            elif ('.' in line) and line.endswith(':'):
-                func_info = [line, list()]
+            elif ('.' in op) and op.endswith(':'):
+                func_info = [op, list()]
                 out_module.functions.append(func_info)
-            elif not line.startswith('.'):
-                code_item = line.split(' ', 1)
+            elif not op.startswith('.'):
+                if not op.endswith(':'):
+                    dbg_info = '#%s(%d)' % (self.module_name, line_no)
+                else:
+                    dbg_info = None
+                code_item = [op, arg, dbg_info]
                 if main_code:
                     out_module.code_lines.append(code_item)
                 else:

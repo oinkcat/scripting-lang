@@ -13,7 +13,7 @@ TOKEN_NAMES = [
     'T_FUNC', 'T_RETURN', 'T_END', 'T_USE',
     'T_IMPORT', 'T_NATIVE',
     'T_EMIT', 'T_AS', 'T_LOGIC',
-    'T_FUNCREF'
+    'T_FUNCREF', 'T_NEW'
 ]
 
 # Special token values
@@ -43,20 +43,11 @@ class InvalidSequence(Exception):
         msg = "Invalid sequence on input: %s\nLine: %d, %s" % args
         Exception.__init__(self, msg)
 
-class InvalidToken(Exception):
-    """ Invalid token occured """
-    
-    def __init__(self, src):
-        tok_name = get_token_name(src.t_type)
-        args = (tok_name, src.t_val, src.line_number, src.line)
-        msg = 'Invalid token: %s, %s\nLine: %d, %s' % args
-        Exception.__init__(self, msg)
-
 class Tokenizer:
     """ Performs string tokenization """
 
     # Complex templates
-    TMPL_MAIN = '("[^"]+")|(\.)|(,)|' + \
+    TMPL_MAIN = '("[^"]*")|(\.)|(,)|' + \
                 '([0-9a-z_]+:)|' + \
                 '([0-9]+(?:\.[0-9]+)?)|' + \
                 '(\+=|-=|\*=|/=|%=)|' + \
@@ -74,11 +65,15 @@ class Tokenizer:
                 '(func)|(return)|(end)|(use)|(import)|(native)|' + \
                 '(emit)|(as)|' + \
                 '(or|and|xor)|' + \
-                '(ref)'
+                '(ref)|(new)'
+
+    # Substitution pattern for string interpolation
+    TMPL_STRING_SUB = '\$\{[^}]+\}'
 
     def __init__(self, source):
         self.re_main = re.compile(Tokenizer.TMPL_MAIN, re.IGNORECASE)
         self.re_word = re.compile(Tokenizer.TMPL_WORD, re.IGNORECASE)
+        self.re_sub = re.compile(Tokenizer.TMPL_STRING_SUB)
         self.gen = self.tokenize(source)
         # Current token information
         self.t_type = None
@@ -116,7 +111,26 @@ class Tokenizer:
         yield (T_EOF, None)
         
 
-    def tokenize_line(self, line):
+    def interpolate_string(self, string):
+        """ Transform string that contains substitution tokens """
+
+        def expander(match):
+            return '" & (%s) & "' % match.group()[2: -1]
+
+        transformed_str = re.sub(self.re_sub, expander, string)
+
+        if string != transformed_str:
+            inner_expr = transformed_str
+            if transformed_str.startswith('"" & '):
+                inner_expr = transformed_str[4:]
+            if transformed_str.endswith(' & ""'):
+                inner_expr = transformed_str[0:-5]
+            return self.tokenize_line(inner_expr, True)
+        else:
+            return None
+
+
+    def tokenize_line(self, line, in_string=False):
         """ Get tokens from one source line """
     
         SKIP_TOKENS = {T_SPACE, T_COMMENT}
@@ -148,8 +162,18 @@ class Tokenizer:
                             if tok_val == matches[i]:
                                 tok_idx += i + 1
                                 break
-                        
-                yield (tok_idx, tok_val)
+                
+                # Try interpolate expressions in string
+                if (not in_string) and (tok_idx == T_STRING):
+                    interpolator = self.interpolate_string(tok_val)
+                    if interpolator != None:
+                        for inner_token in interpolator:
+                            if inner_token[0] != T_EOL:
+                                yield inner_token
+                    else:
+                        yield (tok_idx, tok_val)
+                else:
+                    yield (tok_idx, tok_val)
             
             prev_end = t.end()
 

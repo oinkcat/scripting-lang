@@ -2,6 +2,15 @@
 from tokenizer import *
 from ast import *
 
+class InvalidToken(Exception):
+    """ Invalid token occured """
+    
+    def __init__(self, src):
+        tok_name = get_token_name(src.t_type)
+        args = (tok_name, src.t_val, src.line_number, src.line)
+        msg = 'Invalid token: %s, %s\nLine: %d, %s' % args
+        Exception.__init__(self, msg)
+
 class Parser:
     """ Language statements parser """
 
@@ -31,11 +40,11 @@ class Parser:
         
         result = None
         if src.t_type == T_NUMBER:
-            result = NumberNode(src.t_val)
+            result = NumberNode(src, src.t_val)
         elif src.t_type == T_STRING:
             if inverted:
                 raise InvalidToken(src)
-            result = StringNode(src.t_val)
+            result = StringNode(src, src.t_val)
         elif src.t_type == T_IDENT:
             # Variable/array reference or function call
             result = self.parse_access(src)
@@ -64,7 +73,7 @@ class Parser:
                 result.value *= -1
                 self.stack.append(result)
             else:
-                self.stack.append(MinusNode(result))
+                self.stack.append(MinusNode(src, result))
         else:
             self.stack.append(result)
         
@@ -77,7 +86,7 @@ class Parser:
             self.parse_factor(src)
             f2 = self.stack.pop()
             f1 = self.stack.pop()
-            f_expr = MathNode(f1, f2, op)
+            f_expr = MathNode(src, f1, f2, op)
             self.stack.append(f_expr)
             self.parse_morefactors(src)
         
@@ -89,7 +98,7 @@ class Parser:
             self.parse_term(src)
             t2 = self.stack.pop()
             t1 = self.stack.pop()
-            t_expr = MathNode(t1, t2, op)
+            t_expr = MathNode(src, t1, t2, op)
             self.stack.append(t_expr)
             self.parse_moreterms(src)
 
@@ -107,7 +116,7 @@ class Parser:
             self.parse_cmp(src)
             c2 = self.stack.pop()
             c1 = self.stack.pop()
-            c_expr = CMPNode(c1, c2, op)
+            c_expr = CMPNode(src, c1, c2, op)
             self.stack.append(c_expr)
             self.parse_morecmp(src)
         
@@ -125,7 +134,7 @@ class Parser:
             self.parse_cond(src)
             l2 = self.stack.pop()
             l1 = self.stack.pop()
-            l_expr = LogicNode(l1, l2, op)
+            l_expr = LogicNode(src, l1, l2, op)
             self.stack.append(l_expr)
             self.parse_moreconds(src)
 
@@ -151,7 +160,7 @@ class Parser:
         
         if negated:
             expr = self.stack.pop()
-            self.stack.append(NegateNode(expr))
+            self.stack.append(NegateNode(src, expr))
         
     def parse_moreconcats(self, src):
         """ Operators priority: 5 """
@@ -160,7 +169,7 @@ class Parser:
             self.parse_concat(src)
             sc2 = self.stack.pop()
             sc1 = self.stack.pop()
-            sc_expr = StringOpNode(sc1, sc2)
+            sc_expr = StringOpNode(src, sc1, sc2)
             self.stack.append(sc_expr)
             self.parse_moreconcats(src)
 
@@ -173,8 +182,49 @@ class Parser:
     def parse_expr(self, src):
         """ Expression/subexpression """
         
-        self.parse_concat(src)
-        self.parse_moreconcats(src)
+        src.next()
+        if src.t_type == T_FUNCREF:
+            ref_expr = self.parse_function_ref(src)
+            self.stack.append(ref_expr)
+        elif src.t_type == T_NEW:
+            obj_expr = self.parse_obj(src)
+            self.stack.append(obj_expr)
+        else:
+            src.hold()
+            self.parse_concat(src)
+            self.parse_moreconcats(src)
+
+    def parse_function_ref(self, src):
+        """ Reference to function """
+
+        src.next()
+        if src.t_type != T_IDENT:
+            raise InvalidToken(src)
+
+        name_part = src.t_val
+        src.next()
+
+        if src.t_type == T_DOT:
+            src.next()
+            if src.t_type != T_IDENT:
+                raise InvalidToken()
+            func_name = src.t_val
+            src.next()
+            return FunctionRefNode(src, func_name, name_part)
+        else:
+            return FunctionRefNode(src, name_part)
+
+    def parse_obj(self, src):
+        """ Parse object constructor """
+
+        src.next()
+        if src.t_type != T_LCBR:
+            raise InvalidToken(src)
+
+        hash = self.parse_hash_array(src)
+        src.next()
+
+        return NewObjNode(src, hash)
         
     def parse_arglist(self, src):
         """ Function call arguments list """
@@ -215,7 +265,7 @@ class Parser:
         if src.t_type != T_RBR:
             raise InvalidToken(src)
         
-        return CondNode(cond, true_expr, false_expr)
+        return CondNode(src, cond, true_expr, false_expr)
         
     def require_cr(self, src):
         delimiters = { T_EOL, T_EOF }
@@ -260,7 +310,7 @@ class Parser:
             raise InvalidToken(src)
         src.next()
             
-        return IfNode(conds_and_blocks, f_branch)
+        return IfNode(src, conds_and_blocks, f_branch)
 
     def parse_for(self, src):
         """ For loop (loops?) """
@@ -274,7 +324,7 @@ class Parser:
         if src.t_type == T_AS:
             src.next()
             if src.t_type != T_IDENT:
-                raise 'Required: identifier!'
+                raise InvalidToken(src)
             iter_var = src.t_val
             src.next()
         
@@ -289,9 +339,9 @@ class Parser:
         src.next()
         
         if iter_var is None:
-            return ForWhileNode(expr, loop)
+            return ForWhileNode(src, expr, loop)
         else:
-            return ForEachNode(expr, iter_var, loop)
+            return ForEachNode(src, expr, iter_var, loop)
 
     def parse_paramlist(self, src):
         """ Function parameters list """
@@ -337,7 +387,7 @@ class Parser:
         src.next()
         self.require_cr(src)
         
-        return FuncNode(id, params, body_block)
+        return FuncNode(src, id, params, body_block)
 
     def parse_array(self, src):
         """ Array literal """
@@ -355,7 +405,7 @@ class Parser:
                 if src.t_type != T_COMMA and src.t_type != T_RSBR:
                     raise InvalidToken(src)
         
-        return ArrayNode(elems, False)
+        return ArrayNode(src, elems, False)
         
     def parse_hash_array(self, src):
         """ Hashed array literal """
@@ -377,7 +427,7 @@ class Parser:
                 if src.t_type != T_COMMA and src.t_type != T_RCBR:
                     raise InvalidToken(src)
         
-        return ArrayNode(elems, True)
+        return ArrayNode(src, elems, True)
 
     def parse_access(self, src, assignment = False):
         """ Parse compound element access """
@@ -387,7 +437,7 @@ class Parser:
         if not assignment:
             delims.add(T_LBR)
 
-        access_expr = IdentifierNode(src.t_val)
+        access_expr = IdentifierNode(src, src.t_val)
         src.next()
 
         while src.t_type in delims:
@@ -398,18 +448,18 @@ class Parser:
                 index_expr = self.stack.pop()
                 if src.t_type != T_RSBR:
                     raise InvalidToken(src)
-                access_expr = ItemGetNode(access_expr, index_expr)
+                access_expr = ItemGetNode(src, access_expr, index_expr)
             elif src.t_type == T_DOT:
                 # Hash element access
                 src.next()
                 if src.t_type != T_IDENT:
                     raise InvalidToken(src)
-                index_expr = StringNode('"%s"' % src.t_val)
-                access_expr = ItemGetNode(access_expr, index_expr)
+                index_expr = StringNode(src, '"%s"' % src.t_val)
+                access_expr = ItemGetNode(src, access_expr, index_expr)
             else:
                 # Invocation
                 args = self.parse_arglist(src)
-                access_expr = InvokeNode(access_expr, args)
+                access_expr = InvokeNode(src, access_expr, args)
             src.next()
 
         src.hold()
@@ -429,13 +479,14 @@ class Parser:
             if isinstance(target, IdentifierNode):
                 if op is not None:
                     # Perform math operation first
-                    expr = MathNode(IdentifierNode(target.name), expr, op)
+                    ident = IdentifierNode(src, target.name)
+                    expr = MathNode(src, ident, expr, op)
 
-                return AssignNode(target.name, expr)
+                return AssignNode(src, target.name, expr)
             else:
                 array_expr = target.array_expr
                 idx_expr = target.index_expr
-                return ItemSetNode(array_expr, idx_expr, expr, op)
+                return ItemSetNode(src, array_expr, idx_expr, expr, op)
 
     def parse_stmt(self, src):
         """ Block level statement """
@@ -449,7 +500,7 @@ class Parser:
             elif src.t_type == T_LBR:
                 args = self.parse_arglist(src)
                 src.next()
-                return InvokeNode(target_expr, args)
+                return InvokeNode(src, target_expr, args)
             else:
                 raise InvalidToken(src)
         elif src.t_type == T_IF:
@@ -468,7 +519,7 @@ class Parser:
                 src.next()
             else:
                 src.hold()
-            return LoopControlNode(is_continue, loop_depth)
+            return LoopControlNode(src, is_continue, loop_depth)
         elif src.t_type == T_RETURN:
             # Return from function
             src.next()
@@ -477,7 +528,7 @@ class Parser:
                 src.hold()
                 self.parse_expr(src)
                 value = self.stack.pop()
-            return ReturnNode(value)
+            return ReturnNode(src, value)
         elif src.t_type == T_EMIT:
             # Yield result to host
             self.parse_expr(src)
@@ -489,7 +540,7 @@ class Parser:
                     raise InvalidToken(src)
                 key = src.t_val
                 src.next()
-            return EmitNode(key, value)
+            return EmitNode(src, key, value)
         
         # No statements parsed
         raise InvalidToken(src)
@@ -517,7 +568,7 @@ class Parser:
         src.next()
         vars = self.get_ident_list(src)
         
-        return UseVariableNode(vars)
+        return UseVariableNode(src, vars)
 
     def parse_import(self, src):
         """ Module refrences """
@@ -530,13 +581,13 @@ class Parser:
 
         module_names = self.get_ident_list(src)
 
-        return ImportModuleNode(is_native, module_names)
+        return ImportModuleNode(src, is_native, module_names)
         
     def parse_block(self, src, type):
         """ Block of statements """
         
         stop_tokens = { T_ELSEIF, T_ELSE, T_END }
-        ast = BlockNode()
+        ast = BlockNode(src)
         
         if type == Parser.B_OUTER:
             src.next()

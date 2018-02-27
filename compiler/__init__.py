@@ -83,7 +83,6 @@ def compile_file(in_file_name, out_file_name):
     compile_buffer(in_file, out_file, files_resolver)
 
 if __name__ == '__main__':
-    test_filename = '/home/igor/shared/compiler_service/tests/obj.l'
-    in_file_name = sys.argv[1] if len(sys.argv) > 1 else test_filename
+    in_file_name = sys.argv[1] if len(sys.argv) > 1 else None
     out_file_name = sys.argv[2] if len(sys.argv) > 2 else None
     compile_file(in_file_name, out_file_name)

@@ -169,8 +169,15 @@ class Parser:
             self.parse_concat(src)
             sc2 = self.stack.pop()
             sc1 = self.stack.pop()
-            sc_expr = StringOpNode(src, sc1, sc2)
-            self.stack.append(sc_expr)
+            # Optimize concatenation of two strings
+            if isinstance(sc1, StringNode) and isinstance(sc2, StringNode):
+                left_part = sc1.value[0:-1]
+                right_part = sc2.value[1:]
+                concatenated = StringNode(src, left_part + right_part)
+                self.stack.append(concatenated)
+            else:
+                sc_expr = StringOpNode(src, sc1, sc2)
+                self.stack.append(sc_expr)
             self.parse_moreconcats(src)
 
     def parse_concat(self, src):

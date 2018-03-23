@@ -1,10 +1,19 @@
 """ Front end """
 import sys
 import os
-from tokenizer import Tokenizer
-from parser import Parser
-from code_gen import CodeGen
-from linker import Linker
+from tokenizer import Tokenizer, InvalidSequence
+from parser import Parser, InvalidToken
+from code_gen import CodeGen, CodeGenError
+from linker import Linker, CompiledModuleLoader
+
+OUT_DEBUG_MSG = True
+
+def out_debug(msg, *args):
+    """ Output debug message """
+
+    if OUT_DEBUG_MSG:
+        line = "%s\n" % msg
+        sys.stderr.write(line % args)
 
 class LocalDependencyProvider:
     """ Provide local importing modules """
@@ -25,27 +34,63 @@ class LocalDependencyProvider:
     def get_dependency(self, mod_name):
         """ Get dependent module """
 
-        dep_file = self._get_local_file(mod_name, self.__class__.EXT_SOURCE)
-        return compile_module_stream(mod_name, dep_file)
+        src_path = self._get_local(mod_name, self.__class__.EXT_SOURCE)
+        bc_path = self._get_local(mod_name, self.__class__.EXT_COMPILED)
 
-    def _get_local_file(self, name, ext):
+        if (src_path is None) and (bc_path is None):
+            raise Exception('Required module %s not found!' % name)
+
+        # Can we load compiled bytecode file
+        if src_path is None:
+            use_compiled = True
+        elif bc_path is None:
+            use_compiled = False
+        else:
+            src_mtime = os.stat(src_path).st_mtime
+            bc_mtime = os.stat(bc_path).st_mtime
+            use_compiled =  bc_mtime >= src_mtime
+
+        if use_compiled:
+            compiled_dep = CompiledModuleLoader().load(bc_path)
+        else:
+            with open(src_path) as dep_src_file:
+                compiled_dep = compile_module_stream(mod_name, dep_src_file)
+                # Save compiled module
+                self._save_compiled_dependency(compiled_dep, src_path)
+
+        detail = ' (compiled)' if use_compiled else ''
+        out_debug('Linking with: %s%s', mod_name, detail)
+
+        return compiled_dep
+
+    def _get_local(self, name, ext):
+        """ Get requested module file name """
+
         mod_filename = name + ext
         mod_file_path = os.path.join(self.base_dir, mod_filename)
 
         if os.path.isfile(mod_file_path):
             # Check local file
-            return open(mod_file_path)
+            return mod_file_path
         else:
             # Check library file
             lib_file_path = os.path.join(self.lib_path, mod_filename)
-            if os.path.isfile(lib_file_path):
-                return open(lib_file_path)
-            else:
-                raise Exception('Required module %s not found!' % name)
+            return lib_file_path if os.path.isfile(lib_file_path) else None
 
+    def _save_compiled_dependency(self, module, src_path):
+        """ Save compiled dependent module """
+
+        compiled_filename = module.name + self.__class__.EXT_COMPILED
+        dirname = os.path.dirname(src_path)
+        compiled_path = os.path.join(dirname, compiled_filename)
+        
+        with open(compiled_path, 'w') as out_file:
+            module.save(out_file)
 
 def compile_module_stream(name, stream):
     """ Compile one module from source stream """
+
+    out_debug('Compiling: %s', name)
 
     with stream:
         # Parse module source
@@ -80,7 +125,14 @@ def compile_file(in_file_name, out_file_name):
                                         else sys.stdout
 
     files_resolver = LocalDependencyProvider(in_file_name)
-    compile_buffer(in_file, out_file, files_resolver)
+
+    try:
+        compile_buffer(in_file, out_file, files_resolver)
+    except (InvalidSequence, InvalidToken, CodeGenError) as e:
+        sys.stderr.write("\033[91mScript compile exception!\n")
+        sys.stderr.write("%s\033[0m\n" % e.message)
+    except Exception:
+        raise
 
 if __name__ == '__main__':
     in_file_name = sys.argv[1] if len(sys.argv) > 1 else None

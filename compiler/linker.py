@@ -1,10 +1,8 @@
-# Modules merger
+""" Module contents linker """
 # -*- config: utf-8 -*-
 import sys
 import re
 import os
-
-OUT_DEBUG_MSG = True
 
 FILE_EXT = '.lb'
 
@@ -68,7 +66,7 @@ class CompiledModule:
                     code_item[1] = str(idx + offsets['data'])
             elif root and opcode == OP_LOAD and code_item[1][0] == '#':
                 idx = int(code_item[1][1:])
-                code_item[1] = str(idx + offsets['global'])
+                code_item[1] = '#' + str(idx + offsets['global'])
             elif opcode in ops_ldst:
                 if opcode == OP_STGLOBAL or opcode == OP_LDGLOBAL or root:
                     idx = int(code_item[1])
@@ -145,10 +143,21 @@ class CompiledModuleLoader:
     
     def __init__(self):
         self.mod_file = None
+        self.cmd_re = re.compile('^(\S+)' + \
+                                 '(?:(?! ; #)\s(.+?))?' + \
+                                 '(?: ; (#.+?\(\d+\)))?$')
         self.line = None
         
     def next_line(self):
         self.line = self.mod_file.next().strip()
+
+    def split_cmd_parts(self):
+        
+        op, m_arg, m_src_info = self.cmd_re.findall(self.line)[0]
+        arg = m_arg if len(m_arg) > 0 else None
+        src_info = m_src_info if len(m_src_info) > 0 else None
+
+        return [op, arg, src_info]
     
     def read_section_lines(self, destination):
         """ Read text lines within section into destination array """
@@ -174,14 +183,14 @@ class CompiledModuleLoader:
             elif self.line.startswith('.'):
                 return
             else:
-                func_info[1].append(self.line.split(' ', 1))
+                func_info[1].append(self.split_cmd_parts())
             
     def read_code(self, module):
         """ Read main code """
     
         while True:
             self.next_line()
-            op_parts = self.line.split(' ', 1)
+            op_parts = self.split_cmd_parts()
             if op_parts[0] == OP_STORE:
                 var_num = int(op_parts[1]) + 1
                 if var_num > module.n_globals:
@@ -215,7 +224,8 @@ class CompiledModuleLoader:
         
         with open(name) as mod_file:
             self.mod_file = mod_file
-            loaded_module = CompiledModule(name[0:-3])
+            mod_name = os.path.basename(name)[0:-3]
+            loaded_module = CompiledModule(mod_name)
             try:
                 self.read_sections(loaded_module)
             except StopIteration:
@@ -225,19 +235,10 @@ class CompiledModuleLoader:
             
 class Merger:
     """ Merges two modules """
-
-    def __init__(self):
-        self.offsets = {
-            'data': 0,
-            'global': 0
-        }
     
     def append_module_contents(self, dest, src):
         """ Append contents of source module to destination """
         
-        src.transform(self.offsets)
-        self.offsets['global'] += src.n_globals
-
         # Native module references
         dest.refs.extend(src.refs)
         dest.refs = list(set(dest.refs))
@@ -247,7 +248,6 @@ class Merger:
             
         # Constant data
         dest.const_data.extend(src.const_data)
-        self.offsets['data'] += len(src.const_data)
             
         # Function definitions
         dest.functions.extend(src.functions)
@@ -255,14 +255,28 @@ class Merger:
         # Code lines
         dest.code_lines.extend(src.code_lines)
     
-    def merge(self, mod1, mod2):
+    def merge(self, accum, ref):
         """ Merge two modules """
+
+        # Transform referenced module
+        offsets = {
+            'global': 0,
+            'data': 0
+        }
+        ref.transform(offsets)
+
+        merged_module = CompiledModule('result')
+        self.append_module_contents(merged_module, ref)
+
+        # Transform target module
+        offsets['global'] = ref.n_globals
+        offsets['data'] = len(ref.const_data)
+        accum.transform(offsets)
+
+        self.append_module_contents(merged_module, accum)
+        merged_module.n_globals = accum.n_globals + ref.n_globals
         
-        result_module = CompiledModule('result')
-        self.append_module_contents(result_module, mod2)
-        self.append_module_contents(result_module, mod1)
-        
-        return result_module
+        return merged_module
         
 class Linker:
     """ Link module with all referenced modules """
@@ -271,15 +285,7 @@ class Linker:
         self.main_mod = module
         self.mods_resolver = resolver
         self.all_imports = set()
-        self.loader = CompiledModuleLoader()
         self.merger = Merger()
-
-    def out_debug(self, msg, *args):
-        """ Output debug message """
-
-        if OUT_DEBUG_MSG:
-            line = "%s\n" % msg
-            sys.stderr.write(line % args)
         
     def _get_full_name(self, mod_name):
         """ Get full name of module file """
@@ -287,8 +293,6 @@ class Linker:
     
     def merge_imports(self, target_mod):
         """ Link module with it's imports """
-        
-        self.out_debug('Compiled module: %s', target_mod.name)
         
         result_mod = target_mod
         
@@ -300,8 +304,6 @@ class Linker:
             self.all_imports.add(ref_mod.name)
             ref_mod = self.merge_imports(ref_mod)
             result_mod = self.merger.merge(result_mod, ref_mod)
-            
-            self.out_debug('%s linked with %s', target_mod.name, ref_mod.name)
             
         return result_mod
         

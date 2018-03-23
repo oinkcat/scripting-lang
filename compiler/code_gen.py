@@ -1,5 +1,6 @@
 """ Code generator """
 import os
+import random
 import linker
 from ast import *
 
@@ -88,7 +89,7 @@ class CodeGen:
 
         self.entry_node = None
         self.last_op = None
-        self.last_jmp_id = 0
+        self.last_jmp_id = random.randint(1, 100) * 100000
         
     def load_module_defs(self, mod_name):
         """ Load module function definitions """

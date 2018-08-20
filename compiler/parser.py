@@ -384,15 +384,40 @@ class Parser:
         
         params = self.parse_paramlist(src)
         src.next()
-        self.require_cr(src)
+
+        # Parent scope variables using
+        uses = None
+        if src.t_type == T_USE:
+            uses = self.parse_use(src)
+        else:
+            src.hold()
+
+        # Short or full body declaration syntax
+        if src.t_type == T_ASSIGN:
+            # One-line body
+            src.next()
+            if src.t_val == '>': # =>
+                src.next()
+                body_block = BlockNode(src)
+                body_block.statements.append(self.parse_stmt(src))
+            else:
+                raise InvalidToken(src)
+        else:
+            # Multi-line body
+            self.require_cr(src)
         
-        # Function body
-        body_block = self.parse_block(src, Parser.B_FUNC)
-        src.next()
-        if src.t_type != T_END:
-            raise InvalidToken(src)
-        src.next()
+            # Function body
+            body_block = self.parse_block(src, Parser.B_FUNC)
+            src.next()
+            if src.t_type != T_END:
+                raise InvalidToken(src)
+            src.next()
+        
         self.require_cr(src)
+
+        # Add parent variable references from function declaration
+        if uses is not None:
+            body_block.statements.insert(0, uses)
         
         return FuncNode(src, id, params, body_block)
 
@@ -565,7 +590,7 @@ class Parser:
             if src.t_type == T_COMMA:
                 src.next()
             elif src.t_type != T_EOL:
-                raise InvalidToken(src)
+                break # raise InvalidToken(src)
 
         return idents
 
@@ -600,7 +625,6 @@ class Parser:
             src.next()
         
         while True:
-                
             # Stop tokens
             if src.t_type == T_EOF:
                 if type == Parser.B_OUTER:

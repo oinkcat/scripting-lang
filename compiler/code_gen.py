@@ -7,8 +7,9 @@ from ast import *
 class Scope:
     """ Global or function scope """
     
-    def __init__(self, name):
+    def __init__(self, name, parent=None):
         self.name = name
+        self.parent = parent
         self.variables = dict()
         self.global_refs = set()
         self.loops = list()
@@ -33,8 +34,11 @@ class CodeGenError(Exception):
     """ Error occured while code generation """
 
     def __init__(self, node, message):
-        dbg_msg = '%s\nLine: %d' % (message, node.line)
-        Exception.__init__(self, dbg_msg)
+        if node is not None:
+            src_info = 'Line: %d' % node.line
+        else:
+            src_info = 'No source mapping info!'
+        Exception.__init__(self, '%s\n%s' % (message, src_info))
         
 class CodeGen:
     """ Code generator with some optimizations """
@@ -200,6 +204,9 @@ class CodeGen:
         
         for gen_idx in self.global_var_gen_idxs:
             op, var_name, ln = self.generated[gen_idx]
+            if var_name not in global_scope.variables:
+                error_msg = 'Global variable %s not found!' % var_name
+                raise CodeGenError(None, error_msg)
             var_idx = global_scope.variables[var_name]
             resolved_opcode = [op[1:], str(var_idx), ln]
             self.generated[gen_idx] = resolved_opcode
@@ -510,7 +517,7 @@ class CodeGen:
         """ Visit function definition node """
         
         self.defined_funcs.add(node.name)
-        self.scopes.append(Scope(node.name))
+        self.scopes.append(Scope(node.name, self.get_scope()))
         for param_name in node.param_list:
             self.put_scope_var(param_name)
         num_params = len(node.param_list)
@@ -577,20 +584,32 @@ class CodeGen:
                 raise CodeGenError(node, error_msg)
         else:
             node.array_expr.accept(self)
-            node.index_expr.accept(self)
-            self.emit('get')
+            # Optimization
+            if isinstance(node.index_expr, NumberNode):
+                self.emit('get.index', str(node.index_expr.value))
+            elif isinstance(node.index_expr, StringNode):
+                self.emit('get.index', node.index_expr.value)
+            else:
+                node.index_expr.accept(self)
+                self.emit('get')
 
     def visit_set(self, node):
         """ Visit compound item's member value setup """
 
         node.elem_expr.accept(self)
         node.array_expr.accept(self)
-        node.index_expr.accept(self)
-
-        # Optionally perform math (?) operation
+        
         if node.op is None:
-            self.emit('set')
+            if isinstance(node.index_expr, NumberNode):
+                self.emit('set.index', str(node.index_expr.value))
+            elif isinstance(node.index_expr, StringNode):
+                self.emit('set.index', str(node.index_expr.value))
+            else:
+                node.index_expr.accept(self)
+                self.emit('set')
         else:
+            # Optionally perform math (?) operation
+            node.index_expr.accept(self)
             self.emit('set.op', CodeGen.COMMON_OPS[node.op])
 
     def visit_bind_extern_var(self, node):

@@ -11,8 +11,11 @@ class Scope:
         self.name = name
         self.parent = parent
         self.variables = dict()
-        self.global_refs = set()
+        self.outer_var_refs = set()
         self.loops = list()
+
+    def is_global(self):
+        return self.name == 'global'
 
     def push_loop(self, id):
         """ Push current loop id """
@@ -80,10 +83,11 @@ class CodeGen:
         self.nodes_stack = []
         self.ast = root_node
         self.scopes = []
+        self.current_scope = None
         self.defined_funcs = set()
         self.functions_refs = set()
-        # Indexes of opcodes with global variables
-        self.global_var_gen_idxs = []
+        # Indexes of opcodes with outer scope variables
+        self.outer_var_gen_idxs = []
         self.generated = []
         # Module contents
         self.shared_vars = []
@@ -137,9 +141,28 @@ class CodeGen:
         return mod_name + '::' + item_name
         
     def get_scope(self):
-        """ Get current scope name """
+        """ Get current scope """
         
-        return self.scopes[len(self.scopes) - 1]
+        return self.current_scope
+
+    def get_scope_by_name(self, name):
+        """ Get requested scope by it's name """
+
+        if name is None:
+            return self.scopes[0]
+        else:
+            found = filter(lambda s: s.name == name, self.scopes)
+            if len(found) > 0:
+                return found[0]
+            else:
+                error_msg = 'Scope %s not found!' % name
+                raise CodeGenError(self.get_current_node(), error_msg)
+
+    def add_scope(self, name, parent=None):
+        """ Add new scope and set it to current """
+
+        self.current_scope = Scope(name, parent)
+        self.scopes.append(self.current_scope)
         
     def put_scope_var(self, var_name):
         """ Put variable in current scope """
@@ -147,7 +170,7 @@ class CodeGen:
         vars = self.get_scope().variables
         if vars.has_key(var_name):
             return vars[var_name]
-        elif var_name in self.get_scope().global_refs:
+        elif var_name in self.get_scope().outer_var_refs:
             # Index needs to be resolved later
             return None
         else:
@@ -163,8 +186,8 @@ class CodeGen:
         if vars.has_key(var_name):
             return vars[var_name]
         else:
-            # Find in global scope
-            if var_name in scope.global_refs:
+            # Find in inner scope
+            if var_name in scope.outer_var_refs:
                 # Index need to be resolved later
                 return -1
             else:
@@ -191,25 +214,36 @@ class CodeGen:
                 
         return len(node.elements) > 0
         
-    def add_global_var_ref(self, op, name):
-        """ Add reference to global variable """
+    def add_outer_var_ref(self, op, name):
+        """ Add reference to outer scope variable """
         
-        self.global_var_gen_idxs.append(len(self.generated))
-        self.emit('!%s.global' % op, name)
+        ref_info = (len(self.generated), self.get_scope())
+        self.outer_var_gen_idxs.append(ref_info)
+        self.emit('!%s.!' % op, name)
         
-    def resolve_global_vars(self):
-        """ Resolve global variable names to it's indexes """
+    def resolve_outer_scope_vars(self):
+        """ Resolve outer scope variable names to it's indexes """
         
-        global_scope = self.scopes[0]
-        
-        for gen_idx in self.global_var_gen_idxs:
-            op, var_name, ln = self.generated[gen_idx]
-            if var_name not in global_scope.variables:
-                error_msg = 'Global variable %s not found!' % var_name
-                raise CodeGenError(None, error_msg)
-            var_idx = global_scope.variables[var_name]
-            resolved_opcode = [op[1:], str(var_idx), ln]
-            self.generated[gen_idx] = resolved_opcode
+        for op_idx, scope in self.outer_var_gen_idxs:
+            op, var_name, ln = self.generated[op_idx]
+
+            # Find innermost scope that contain referenced variable
+            unwind_level = 0
+            while var_name not in scope.variables:
+                scope = scope.parent
+                unwind_level += 1
+                if scope is None:
+                    error_msg = 'Referenced variable %s not found!' % var_name
+                    raise CodeGenError(None, error_msg)
+
+            var_idx = scope.variables[var_name]
+
+            # Fix generated opcode
+            opcode = op[1:-1] + ('global' if scope.is_global() else 'outer')
+            oparg = str(var_idx) \
+                if scope.is_global() \
+                else '%d:%d' % (unwind_level, var_idx)
+            self.generated[op_idx] = [opcode, oparg, ln]
 
     def check_function_refs(self):
         """ Check referenced function names """
@@ -245,12 +279,12 @@ class CodeGen:
                 break
         
         # Traverse AST
-        self.scopes.append(Scope('global'))
+        self.add_scope('global')
         self.ast.accept(self)
         
-        # Resolve global variable indexes
-        if len(self.global_var_gen_idxs) > 0:
-            self.resolve_global_vars()
+        # Resolve outer scope variable indexes
+        if len(self.outer_var_gen_idxs) > 0:
+            self.resolve_outer_scope_vars()
 
         # Check function references
         self.check_function_refs()
@@ -308,7 +342,7 @@ class CodeGen:
             if var_idx is not None:
                 self.emit('load', '#' + str(var_idx))
             else:
-                self.add_global_var_ref('load', node.name)
+                self.add_outer_var_ref('load', node.name)
 
     def emit_static_function_call(self, node, mod_name, func_name):
         """ Emit static call opcodes """
@@ -392,7 +426,7 @@ class CodeGen:
         if var_idx is not None:
             self.emit('store', str(var_idx))
         else:
-            self.add_global_var_ref('store', node.name)
+            self.add_outer_var_ref('store', node.name)
         
     def emit_if_cond(self, cond_expr, has_else, branch_label):
         """ Emit if statement/expression's condition """
@@ -517,15 +551,22 @@ class CodeGen:
         """ Visit function definition node """
         
         self.defined_funcs.add(node.name)
-        self.scopes.append(Scope(node.name, self.get_scope()))
+
+        parent_scope = self.get_scope_by_name(node.scope_name)
+        self.add_scope(node.name, parent_scope)
+
+        # Add paramerers to local variables
         for param_name in node.param_list:
             self.put_scope_var(param_name)
+
         num_params = len(node.param_list)
         self.emit_label('%s.%d' % (node.name, num_params))
+
         node.func_block.accept(self)
         if not self.last_op == 'ret':
             self.emit('ret')
-        self.scopes.pop()
+
+        self.current_scope = self.scopes[0]
 
     def visit_return(self, node):
         """ Visit return node """
@@ -616,14 +657,14 @@ class CodeGen:
         """ Visit global/shared with host variable binding node """
 
         scope = self.get_scope()
-        if scope.name == 'global':
+        if scope.is_global():
             # A variable shared with host
             for var_name in node.variables:
                 self.shared_vars.append(var_name)
                 self.put_scope_var(var_name)
         else:
-            # A global variable
-            scope.global_refs.update(node.variables)
+            # A outer scope variable
+            scope.outer_var_refs.update(node.variables)
 
     def visit_add_module_ref(self, node):
         """ Visit module reference node """

@@ -162,11 +162,12 @@ class LoopControlNode(ASTNode):
 class FuncNode(ASTNode):
     """ Function definition """
     
-    def __init__(self, tokenizer, name, params, block):
+    def __init__(self, tokenizer, name, params, block, scope):
         ASTNode.__init__(self, tokenizer)
         self.name = name
         self.param_list = params
         self.func_block = block
+        self.scope_name = scope
     
 class ReturnNode(ASTNode):
     """ Return statement """

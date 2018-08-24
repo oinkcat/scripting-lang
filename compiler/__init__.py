@@ -1,8 +1,8 @@
 """ Front end """
-import sys
+import sys, traceback
 import os
 from tokenizer import Tokenizer, InvalidSequence
-from parser import Parser, InvalidToken
+from l_parser import Parser, InvalidToken
 from code_gen import CodeGen, CodeGenError
 from linker import Linker, CompiledModuleLoader
 
@@ -131,6 +131,7 @@ def compile_file(in_file_name, out_file_name):
     except (InvalidSequence, InvalidToken, CodeGenError) as e:
         sys.stderr.write("\033[91mScript compile exception!\n")
         sys.stderr.write("%s\033[0m\n" % e.message)
+        traceback.print_exc(file=sys.stdout)
     except Exception:
         raise
 

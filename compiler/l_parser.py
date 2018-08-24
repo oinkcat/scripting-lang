@@ -21,7 +21,40 @@ class Parser:
 
     def __init__(self, tokenizer):
         self.stack = []
+        self.scope_names = []
         self.tokens_source = tokenizer
+        self.root_node = None
+        self.auto_id = 0
+
+    def get_next_id(self):
+        """ Return new generated identifier """
+
+        self.auto_id += 1
+        return self.auto_id
+        
+    def require_cr(self, src):
+        """ Require occurence of EOL token """
+
+        delimiters = { T_EOL, T_EOF }
+        if src.t_type not in delimiters:
+            raise InvalidToken(src)
+        src.next()
+        
+    def strip_cr(self, src):
+        """ Skip EOL tokens """
+
+        while src.t_type == T_EOL:
+            src.next()
+
+    def append_function(self, func):
+        """ Append new function definition node """
+        
+        pos = 0
+        for node in self.root_node.statements:
+            if not node.is_directive():
+                break
+            pos += 1
+        self.root_node.statements.insert(pos, func)
         
     def parse_to_ast(self):
         """ Parse all tokens """
@@ -196,6 +229,13 @@ class Parser:
         elif src.t_type == T_NEW:
             obj_expr = self.parse_obj(src)
             self.stack.append(obj_expr)
+        elif src.t_type == T_FUNC:
+            # Add function declaration with auto-generated name
+            src.next()
+            lambda_expr = self.parse_func(src, True)
+            self.append_function(lambda_expr)
+            lambda_ref = FunctionRefNode(src, lambda_expr.name)
+            self.stack.append(lambda_ref)
         else:
             src.hold()
             self.parse_concat(src)
@@ -273,16 +313,6 @@ class Parser:
             raise InvalidToken(src)
         
         return CondNode(src, cond, true_expr, false_expr)
-        
-    def require_cr(self, src):
-        delimiters = { T_EOL, T_EOF }
-        if src.t_type not in delimiters:
-            raise InvalidToken(src)
-        src.next()
-        
-    def strip_cr(self, src):
-        while src.t_type == T_EOL:
-            src.next()
 
     def parse_if_stmt(self, src):
         """ If statement """
@@ -368,14 +398,20 @@ class Parser:
                 
         return param_names
 
-    def parse_func(self, src):
+    def parse_func(self, src, is_lambda=False):
         """ Function definition """
         
         # Name
-        if src.t_type != T_IDENT:
-            raise InvalidToken(src)
-        id = src.t_val
-        src.next()
+        if not is_lambda:
+            if src.t_type != T_IDENT:
+                raise InvalidToken(src)
+            id = src.t_val
+            src.next()
+        else:
+            id = '$lambda_%s' % str(self.get_next_id())
+
+        # Push scope name
+        self.scope_names.append(id)
         
         # Parameters list
         if src.t_type != T_LBR:
@@ -389,8 +425,6 @@ class Parser:
         uses = None
         if src.t_type == T_USE:
             uses = self.parse_use(src)
-        else:
-            src.hold()
 
         # Short or full body declaration syntax
         if src.t_type == T_ASSIGN:
@@ -412,14 +446,18 @@ class Parser:
             if src.t_type != T_END:
                 raise InvalidToken(src)
             src.next()
-        
-        self.require_cr(src)
+
+        # Pop scope name
+        self.scope_names.pop()
 
         # Add parent variable references from function declaration
         if uses is not None:
             body_block.statements.insert(0, uses)
         
-        return FuncNode(src, id, params, body_block)
+        # Definition scope
+        def_scope = self.scope_names[-1] if len(self.scope_names) > 0 else None
+
+        return FuncNode(src, id, params, body_block, def_scope)
 
     def parse_array(self, src):
         """ Array literal """
@@ -595,7 +633,7 @@ class Parser:
         return idents
 
     def parse_use(self, src):
-        """ Global/shared variable using directive """
+        """ Outer scope/shared variable using directive """
         
         src.next()
         vars = self.get_ident_list(src)
@@ -622,6 +660,7 @@ class Parser:
         ast = BlockNode(src)
         
         if type == Parser.B_OUTER:
+            self.root_node = ast
             src.next()
         
         while True:
@@ -649,14 +688,8 @@ class Parser:
                 if type != Parser.B_OUTER:
                     raise InvalidToken(src)
                 src.next()
-                func = self.parse_func(src)
-                # Position to insert
-                pos = 0
-                for node in ast.statements:
-                    if not node.is_directive():
-                        break
-                    pos += 1
-                ast.statements.insert(pos, func)
+                func_def = self.parse_func(src)
+                self.append_function(func_def)
             elif src.t_type == T_USE:
                 if type == Parser.B_STMT:
                     raise InvalidToken(src)

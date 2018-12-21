@@ -1,5 +1,6 @@
 """ Lexer """
 import re
+import compatibility
 
 # Tokens
 TOKEN_NAMES = [
@@ -91,7 +92,7 @@ class Tokenizer:
         
         if not self.retry:
             try:
-                token = self.gen.next()
+                token = compatibility.gen_next(self.gen)
                 self.t_type, self.t_val = token
             except StopIteration:
                 pass
@@ -158,7 +159,7 @@ class Tokenizer:
                     word_matches = self.re_word.findall(tok_val)
                     if len(word_matches) > 0:
                         matches = word_matches[0]
-                        for i in xrange(0, len(matches)):
+                        for i in compatibility.num_range(0, len(matches)):
                             if tok_val == matches[i]:
                                 tok_idx += i + 1
                                 break

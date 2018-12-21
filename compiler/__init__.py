@@ -1,10 +1,12 @@
 """ Front end """
 import sys, traceback
 import os
+import compatibility
 from tokenizer import Tokenizer, InvalidSequence
 from l_parser import Parser, InvalidToken
 from code_gen import CodeGen, CodeGenError
 from linker import Linker, CompiledModuleLoader
+from compatibility import open_utf8
 
 OUT_DEBUG_MSG = True
 
@@ -53,7 +55,7 @@ class LocalDependencyProvider:
         if use_compiled:
             compiled_dep = CompiledModuleLoader().load(bc_path)
         else:
-            with open(src_path) as dep_src_file:
+            with open_utf8(src_path) as dep_src_file:
                 compiled_dep = compile_module_stream(mod_name, dep_src_file)
                 # Save compiled module
                 self._save_compiled_dependency(compiled_dep, src_path)
@@ -84,7 +86,7 @@ class LocalDependencyProvider:
         dirname = os.path.dirname(src_path)
         compiled_path = os.path.join(dirname, compiled_filename)
         
-        with open(compiled_path, 'w') as out_file:
+        with open_utf8(compiled_path) as out_file:
             module.save(out_file)
 
 def compile_module_stream(name, stream):
@@ -94,7 +96,7 @@ def compile_module_stream(name, stream):
 
     with stream:
         # Parse module source
-        tok = Tokenizer(stream.xreadlines())
+        tok = Tokenizer(compatibility.file_readlines(stream))
         parser = Parser(tok)
         ast = parser.parse_to_ast()
     
@@ -119,7 +121,7 @@ def compile_buffer(input, output, resolver):
 def compile_file(in_file_name, out_file_name):
     """ Compile code from file """
     
-    in_file = open(in_file_name) if in_file_name is not None \
+    in_file = open_utf8(in_file_name) if in_file_name is not None \
                                  else sys.stdin
     out_file = open(out_file_name, 'w') if out_file_name is not None \
                                         else sys.stdout

@@ -3,6 +3,7 @@
 import sys
 import re
 import os
+import compatibility
 
 FILE_EXT = '.lb'
 
@@ -37,7 +38,7 @@ class CompiledModule:
     def _transform_function_defs(self):
         """ Prepend module name before function name """
         
-        for i in range(0, len(self.functions)):
+        for i in compatibility.num_range(0, len(self.functions)):
             func_name = self.functions[i][0]
             if '::' in func_name:
                 continue
@@ -50,7 +51,7 @@ class CompiledModule:
 
         ops_ldst = { OP_LDGLOBAL, OP_STORE, OP_STGLOBAL }
 
-        for i in range(0, len(code_lines)):
+        for i in compatibility.num_range(0, len(code_lines)):
             code_item = code_lines[i]
             opcode = code_item[0]
             
@@ -149,7 +150,7 @@ class CompiledModuleLoader:
         self.line = None
         
     def next_line(self):
-        self.line = self.mod_file.next().strip()
+        self.line = compatibility.gen_next(self.mod_file).strip()
 
     def split_cmd_parts(self):
         
@@ -222,7 +223,7 @@ class CompiledModuleLoader:
     def load(self, name):
         """ Load compiled module """
         
-        with open(name) as mod_file:
+        with compatibility.open_utf8(name) as mod_file:
             self.mod_file = mod_file
             mod_name = os.path.basename(name)[0:-3]
             loaded_module = CompiledModule(mod_name)

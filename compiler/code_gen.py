@@ -2,6 +2,7 @@
 import os
 import random
 import linker
+import compatibility
 from ast import *
 
 class Scope:
@@ -105,11 +106,11 @@ class CodeGen:
         curdir_path = os.path.dirname(os.path.realpath(__file__))
         defs_path = curdir_path + '/../defs/'
         mod_filename = defs_path + mod_name + CodeGen.DEFS_FILEEXT
-        defs_file = open(mod_filename)
+        defs_file = compatibility.open_utf8(mod_filename)
 
         contents = dict()
         
-        for def_item in defs_file.xreadlines():
+        for def_item in compatibility.file_readlines(defs_file):
             name = def_item.strip()
             if len(name) > 0 and name[0] != '#':
                 if '.' in name:
@@ -168,7 +169,7 @@ class CodeGen:
         """ Put variable in current scope """
         
         vars = self.get_scope().variables
-        if vars.has_key(var_name):
+        if var_name in vars:
             return vars[var_name]
         elif var_name in self.get_scope().outer_var_refs:
             # Index needs to be resolved later
@@ -183,7 +184,7 @@ class CodeGen:
 
         scope = self.get_scope()
         vars = scope.variables
-        if vars.has_key(var_name):
+        if var_name in vars:
             return vars[var_name]
         else:
             # Find in inner scope
@@ -200,9 +201,7 @@ class CodeGen:
         if var_idx is not None:
             return var_idx if var_idx > -1 else None
         else:
-            msg = 'Variable or constant %s not found in scope %s!' \
-                    % (var_name, self.get_scope().name)
-            raise CodeGenError(self.get_current_node(), msg)
+            return None
             
     def is_const_array(self, node):
         """ Check if array contains only const values """

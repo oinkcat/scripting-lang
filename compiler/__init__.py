@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """ Front end """
 import sys, traceback
 import os
@@ -86,7 +87,7 @@ class LocalDependencyProvider:
         dirname = os.path.dirname(src_path)
         compiled_path = os.path.join(dirname, compiled_filename)
         
-        with open_utf8(compiled_path) as out_file:
+        with open(compiled_path, 'w') as out_file:
             module.save(out_file)
 
 def compile_module_stream(name, stream):
@@ -122,9 +123,9 @@ def compile_file(in_file_name, out_file_name):
     """ Compile code from file """
     
     in_file = open_utf8(in_file_name) if in_file_name is not None \
-                                 else sys.stdin
+                                      else sys.stdin
     out_file = open(out_file_name, 'w') if out_file_name is not None \
-                                        else sys.stdout
+                                             else sys.stdout
 
     files_resolver = LocalDependencyProvider(in_file_name)
 

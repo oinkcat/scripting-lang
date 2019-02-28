@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """ AST nodes """
 
 class ASTNode:

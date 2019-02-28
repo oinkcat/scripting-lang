@@ -1,2 +1,3 @@
 /compiler/*.pyc
 /tests/src/*.lb
+/compiler/__pycache__

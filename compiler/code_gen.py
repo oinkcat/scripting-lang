@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """ Code generator """
 import os
 import random

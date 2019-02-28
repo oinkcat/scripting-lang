@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """ Lexer """
 import re
 import compatibility

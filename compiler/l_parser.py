@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """ Parser syntax rules """
 from tokenizer import *
 from ast import *

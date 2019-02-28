@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """ Compatibility functions for Python 3 """
 import codecs
 from sys import version_info
@@ -29,6 +30,15 @@ def gen_next(gen_obj):
         return gen_obj.next()
 
 def open_utf8(filename):
-    """ Open file for reading """
+    """ Open file encoded in utf-8 """
 
     return codecs.open(filename, 'r', 'utf-8')
+
+def unicode_to_str(ustr):
+    """ Convert unicode to string """
+
+    encoded = ustr.encode('utf-8')
+    if IS_PYTHON_3:
+        return encoded.decode()
+    else:
+        return encoded

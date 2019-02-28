@@ -1,5 +1,5 @@
+# -*- coding: utf-8 -*-
 """ Module contents linker """
-# -*- config: utf-8 -*-
 import sys
 import re
 import os
@@ -94,7 +94,7 @@ class CompiledModule:
         out_lines = list()
         
         def append(text):
-            out_lines.append(text + "\n")
+            out_lines.append(text + '\n')
         
         def write_section(section_name, array):
             if len(array) > 0:
@@ -150,7 +150,8 @@ class CompiledModuleLoader:
         self.line = None
         
     def next_line(self):
-        self.line = compatibility.gen_next(self.mod_file).strip()
+        unicode_line = compatibility.gen_next(self.mod_file).strip()
+        self.line = compatibility.unicode_to_str(unicode_line)
 
     def split_cmd_parts(self):
         
@@ -218,7 +219,7 @@ class CompiledModuleLoader:
             elif self.line == SECTION_MAIN:
                 self.read_code(module)
             else:
-                raise Exception('Invalid section name: %s!' % section)
+                raise Exception('Invalid section name: %s!' % self.line)
 
     def load(self, name):
         """ Load compiled module """

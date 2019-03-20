@@ -82,20 +82,20 @@ class CodeGen:
     
     def __init__(self, root_node, name):
         self.module_name = name
-        self.nodes_stack = []
+        self.nodes_stack = list()
         self.ast = root_node
-        self.scopes = []
+        self.scopes = list()
         self.current_scope = None
-        self.defined_funcs = set()
-        self.functions_refs = set()
+        self.defined_funcs = dict()
+        self.functions_refs = list()
         # Indexes of opcodes with outer scope variables
-        self.outer_var_gen_idxs = []
-        self.generated = []
+        self.outer_var_gen_idxs = list()
+        self.generated = list()
         # Module contents
-        self.shared_vars = []
-        self.imports = []
+        self.shared_vars = list()
+        self.imports = list()
         self.native_refs = dict()
-        self.const_data = []
+        self.const_data = list()
 
         self.entry_node = None
         self.last_op = None
@@ -249,12 +249,28 @@ class CodeGen:
         """ Check referenced function names """
 
         # Functions defined in this module
-        funcs_defined = filter(lambda r: '::' not in r, self.functions_refs)
-        undefined = set(funcs_defined).difference(self.defined_funcs)
+        # referenced = filter(lambda r: '::' not in r, self.functions_refs)
+        # module_func_names = set(self.defined_funcs.keys())
+        # undefined = set(referenced).difference(module_func_names)
 
-        if len(undefined) > 0:
-            func_names = ', '.join(undefined)
-            raise Exception('Undefined functions: ' + func_names)
+        # if len(undefined) > 0:
+        #     func_names = ', '.join(undefined)
+        #    raise Exception('Undefined functions: ' + func_names)
+
+        for name, node in self.functions_refs:
+            if '::' in name:
+                continue
+
+            if name in self.defined_funcs:
+                param_count = self.defined_funcs[name]
+                call_param_count = len(node.call_args)
+                if call_param_count != param_count:
+                    error_msg = 'Incorrect arguments number calling a ' + \
+                                'function %s. Need: %d, got: %d' % \
+                                (name, param_count, call_param_count)
+                    raise CodeGenError(node, error_msg)
+            else:
+                raise CodeGenError(node, 'Function not defined: %s' % name)
         
     def generate(self):
         """ Start code generation """
@@ -262,19 +278,14 @@ class CodeGen:
         if self.ast is None or len(self.ast.statements) == 0:
             raise Exception('No AST specified!')
         
-        # Find function definitions section
-        root_statements = self.ast.statements
-        for node in root_statements:
+        # Find function definitions section and entry point
+        defs_found = False
+        for node in self.ast.statements:
             if isinstance(node, FuncNode):
-                self.emit(linker.SECTION_DEFS)
-                break
+                if not defs_found:
+                    self.emit(linker.SECTION_DEFS)
+                    defs_found = True
             elif not node.is_directive():
-                break
-            
-        # Find entry point
-        for node in root_statements:
-            if (not isinstance(node, FuncNode)) and \
-               (not node.is_directive()):
                 self.entry_node = node
                 break
         
@@ -359,7 +370,7 @@ class CodeGen:
             else:
                 error_msg = 'Invalid module name: %s' % mod_name
                 raise CodeGenError(node, error_msg)
-            self.functions_refs.add(udf_name)
+            self.functions_refs.append((udf_name, node))
             self.emit('call.udf', udf_name)
 
     def emit_dynamic_call(self, node):
@@ -549,8 +560,6 @@ class CodeGen:
 
     def visit_func_def(self, node):
         """ Visit function definition node """
-        
-        self.defined_funcs.add(node.name)
 
         parent_scope = self.get_scope_by_name(node.scope_name)
         self.add_scope(node.name, parent_scope)
@@ -567,6 +576,9 @@ class CodeGen:
             self.emit('ret')
 
         self.current_scope = self.scopes[0]
+        
+        # Store number of parameters (for further check)
+        self.defined_funcs[node.name] = num_params
 
     def visit_return(self, node):
         """ Visit return node """

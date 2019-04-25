@@ -22,6 +22,8 @@ OP_STORE = 'store'
 OP_LDGLOBAL = 'load.global'
 OP_STGLOBAL = 'store.global'
 
+GLOBAL_ID = 'main'
+
 class CompiledModule:
     """ Compiled module """
     
@@ -34,6 +36,7 @@ class CompiledModule:
         self.functions = []
         self.code_lines = []
         self.n_globals = 0
+        self.calls = {}
         
     def _transform_function_defs(self):
         """ Prepend module name before function name """
@@ -46,7 +49,7 @@ class CompiledModule:
             qualified_name = '%s::%s.%s' % (self.name, name, args_count)
             self.functions[i][0] = qualified_name
             
-    def _transform_code(self, code_lines, offsets, root = False):
+    def _transform_code(self, scope_name, code_lines, offsets, root = False):
         """ Transform function code """
 
         ops_ldst = { OP_LDGLOBAL, OP_STORE, OP_STGLOBAL }
@@ -60,6 +63,10 @@ class CompiledModule:
                 is_bare = len(func_name_parts) == 1
                 if is_bare and (func_name_parts[0] not in self.imports):
                     code_item[1] = '%s::%s' % (self.name, code_item[1])
+
+                if scope_name not in self.calls:
+                    self.calls[scope_name] = set()
+                self.calls[scope_name].add(code_item[1])
             elif (opcode == OP_LDCONST):
                 # If represents index of constant data array
                 if all(c.isdigit() for c in code_item[1]):
@@ -80,11 +87,12 @@ class CompiledModule:
         self._transform_function_defs()
         
         # References in functions code
-        for _, code in self.functions:
-            self._transform_code(code, offsets)
+        for func_name, code in self.functions:
+            scope_id = func_name[:func_name.find('.')]
+            self._transform_code(scope_id, code, offsets)
             
         # References in main code
-        self._transform_code(self.code_lines, offsets, True)
+        self._transform_code(GLOBAL_ID, self.code_lines, offsets, True)
 
         return offsets
         
@@ -256,6 +264,9 @@ class Merger:
             
         # Code lines
         dest.code_lines.extend(src.code_lines)
+
+        # Function calls
+        dest.calls.update(src.calls)
     
     def merge(self, accum, ref):
         """ Merge two modules """
@@ -292,6 +303,17 @@ class Linker:
     def _get_full_name(self, mod_name):
         """ Get full name of module file """
         return os.path.join(self.base_dir, mod_name + FILE_EXT)
+
+    def _get_funcs_in_call_chain(self, mod, scope_name):
+        """ Get all function names called from global scope """
+
+        refs = set()
+        for func_name in mod.calls[scope_name]:
+            refs.add(func_name)
+            if func_name in mod.calls:
+                refs.update(self._get_funcs_in_call_chain(mod, func_name))
+
+        return refs
     
     def merge_imports(self, target_mod):
         """ Link module with it's imports """
@@ -312,4 +334,19 @@ class Linker:
     def link(self):
         """ Link all referenced modules """
         
-        return self.merge_imports(self.main_mod)
+        final_mod = self.merge_imports(self.main_mod)
+
+        # Strip unused functions
+        called_funcs = self._get_funcs_in_call_chain(final_mod, GLOBAL_ID)
+        unused_funcs = []
+
+        for func in final_mod.functions:
+            func_name = func[0]
+            short_name = func_name[:func_name.find('.')]
+            if short_name not in called_funcs:
+                unused_funcs.append(func)
+        
+        for func_to_strip in unused_funcs:
+            final_mod.functions.remove(func_to_strip)
+
+        return final_mod

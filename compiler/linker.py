@@ -304,7 +304,7 @@ class Linker:
         """ Get full name of module file """
         return os.path.join(self.base_dir, mod_name + FILE_EXT)
 
-    def _get_funcs_in_call_chain(self, mod, scope_name):
+    def _get_called_funcs(self, mod, scope_name):
         """ Get all function names called from global scope """
 
         refs = set()
@@ -334,19 +334,24 @@ class Linker:
     def link(self):
         """ Link all referenced modules """
         
-        final_mod = self.merge_imports(self.main_mod)
+        if len(self.main_mod.imports) > 0:
+            final_mod = self.merge_imports(self.main_mod)
 
-        # Strip unused functions
-        called_funcs = self._get_funcs_in_call_chain(final_mod, GLOBAL_ID)
-        unused_funcs = []
+            # Strip unused functions
+            called_funcs = self._get_called_funcs(final_mod, GLOBAL_ID) \
+                                if GLOBAL_ID in final_mod.calls \
+                                else []
+            unused_funcs = []
 
-        for func in final_mod.functions:
-            func_name = func[0]
-            short_name = func_name[:func_name.find('.')]
-            if short_name not in called_funcs:
-                unused_funcs.append(func)
-        
-        for func_to_strip in unused_funcs:
-            final_mod.functions.remove(func_to_strip)
+            for func in final_mod.functions:
+                func_name = func[0]
+                short_name = func_name[:func_name.find('.')]
+                if short_name not in called_funcs:
+                    unused_funcs.append(func)
+            
+            for func_to_strip in unused_funcs:
+                final_mod.functions.remove(func_to_strip)
 
-        return final_mod
+            return final_mod
+        else:
+            return self.main_mod
